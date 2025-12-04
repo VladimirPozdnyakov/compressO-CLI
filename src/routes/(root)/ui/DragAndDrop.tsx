@@ -45,7 +45,7 @@ function DragAndDrop({ disable = false, onFile }: DragAndDropProps) {
       if (!disable) {
         dragAndDropListenerRef.current.drop = await event.listen<{
           paths: string[]
-        }>('tauri://drop', (evt) => {
+        }>(event.TauriEvent.DRAG_DROP, (evt) => {
           setDragAndDropState('dropped')
           if (!dragAndDropListenerIsDroppedRef.current) {
             dragAndDropListenerIsDroppedRef.current = true
@@ -70,13 +70,13 @@ function DragAndDrop({ disable = false, onFile }: DragAndDropProps) {
           }
         })
         dragAndDropListenerRef.current.drag = await event.listen(
-          'tauri://drag',
+          event.TauriEvent.DRAG_ENTER,
           () => {
             setDragAndDropState('dragging')
           },
         )
         dragAndDropListenerRef.current.dragCancelled = await event.listen(
-          'tauri://drag-cancelled',
+          event.TauriEvent.DRAG_LEAVE,
           () => {
             setDragAndDropState('idle')
           },

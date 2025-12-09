@@ -6,7 +6,6 @@ on:
 
 jobs:
   convert:
-    # Only run if the 'discussion' label is applied
     if: contains(github.event.issue.labels.*.name, 'discussion')
     runs-on: ubuntu-latest
 
@@ -35,7 +34,6 @@ jobs:
               "body": "${{ github.event.issue.body }}",
               "categoryId": "DIC_kwDOKsQLc84Cxoxg"
             }
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Comment on Issue With Discussion Link
         run: |

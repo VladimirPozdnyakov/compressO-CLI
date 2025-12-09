@@ -1,0 +1,54 @@
+name: Convert Issue To Discussion
+
+on:
+  issues:
+    types: [labeled]
+
+jobs:
+  convert:
+    # Only run if the 'discussion' label is applied
+    if: contains(github.event.issue.labels.*.name, 'discussion')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Create Discussion
+        id: create_discussion
+        uses: octokit/graphql-action@v2.x
+        with:
+          query: |
+            mutation($repo: ID!, $title: String!, $body: String!, $categoryId: ID!) {
+              createDiscussion(input: {
+                repositoryId: $repo,
+                title: $title,
+                body: $body,
+                categoryId: $categoryId
+              }) {
+                discussion {
+                  url
+                }
+              }
+            }
+          variables: |
+            {
+              "repo": "${{ github.repository_node_id }}",
+              "title": "${{ github.event.issue.title }}",
+              "body": "${{ github.event.issue.body }}",
+              "categoryId": "DIC_kwDOKsQLc84Cxoxg"
+            }
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Comment on Issue With Discussion Link
+        run: |
+          DISC_URL="${{ steps.create_discussion.outputs.data.createDiscussion.discussion.url }}"
+          gh issue comment ${{ github.event.issue.number }} \
+            --body "This issue has been moved to discussion: ${DISC_URL}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Close Issue
+        run: |
+          DISC_URL="${{ steps.create_discussion.outputs.data.createDiscussion.discussion.url }}"
+          gh issue close ${{ github.event.issue.number }} \
+            --comment "Discussion created: ${DISC_URL}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

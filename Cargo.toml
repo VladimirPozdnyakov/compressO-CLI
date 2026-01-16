@@ -1,0 +1,56 @@
+[package]
+name = "compresso"
+version = "1.0.0"
+description = "Fast video compression CLI tool powered by FFmpeg"
+authors = ["CompressO Team"]
+license = "AGPL-3.0-only"
+repository = "https://github.com/codeforreal1/compressO"
+edition = "2021"
+rust-version = "1.70"
+
+[[bin]]
+name = "compresso"
+path = "src/main.rs"
+
+[dependencies]
+# CLI
+clap = { version = "4", features = ["derive", "color"] }
+
+# Progress & Output
+indicatif = "0.17"
+console = "0.15"
+colored = "2"
+
+# Async runtime
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "process", "fs", "io-util"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Utils
+regex = "1"
+nanoid = "0.4"
+infer = "0.15"
+image = "0.25"
+thiserror = "1"
+which = "6"
+directories = "5"
+ctrlc = "3"
+
+# Process management
+shared_child = "1"
+crossbeam-channel = "0.5"
+
+[build-dependencies]
+embed-resource = { version = "2", optional = true }
+
+[features]
+default = []
+bundled-ffmpeg = []
+
+[profile.release]
+lto = true
+strip = true
+codegen-units = 1
+panic = "abort"

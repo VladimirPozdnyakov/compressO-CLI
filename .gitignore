@@ -1,39 +1,40 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+# Rust
+/target/
+Cargo.lock
 
-# dependencies
-/node_modules
-/.pnp
-.pnp.js
-.yarn/install-state.gz
+# IDE
+.idea/
+.vscode/
+.claude/
+*.swp
+*.swo
+*~
 
-# testing
-/coverage
-
-# production
-/build
-/out/
-/dist/
-
-# misc
+# OS
 .DS_Store
-*.pem
+Thumbs.db
 
-# debug
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
+# Build artifacts
+*.exe
+*.dll
+*.so
+*.dylib
 
-# local env files
-.env*.local
+# Debug
+*.pdb
 
-# vercel
-.vercel
+# Test outputs
+*.log
 
-# typescript
+# Environment
+.env
+.env.local
+
+# Old GUI files (to be removed)
+/node_modules/
+/dist/
+/out/
+/.pnp/
+.pnp.js
+.yarn/
 *.tsbuildinfo
-
-
-/**/.env
-
-analyze
-target

@@ -1,0 +1,144 @@
+use std::fs;
+use std::path::Path;
+
+use crate::domain::FileMetadata;
+use crate::error::{CompressoError, Result};
+
+/// Get metadata of a file from its path
+pub fn get_file_metadata(path: &str) -> Result<FileMetadata> {
+    let file_path = Path::new(path);
+
+    if !file_path.exists() {
+        return Err(CompressoError::FileNotFound(path.to_string()));
+    }
+
+    let metadata = fs::metadata(path)?;
+    let mime_type = infer::get_from_path(path)
+        .ok()
+        .flatten()
+        .map(|m| m.to_string())
+        .unwrap_or_default();
+
+    let file_name = file_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_string();
+
+    let extension = file_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_string();
+
+    Ok(FileMetadata {
+        path: path.to_string(),
+        file_name,
+        mime_type,
+        extension,
+        size: metadata.len(),
+    })
+}
+
+/// Check if file is a valid video file
+pub fn is_video_file(path: &str) -> bool {
+    let valid_extensions = ["mp4", "mov", "webm", "avi", "mkv", "m4v", "wmv", "flv"];
+
+    if let Some(ext) = Path::new(path).extension() {
+        if let Some(ext_str) = ext.to_str() {
+            return valid_extensions.contains(&ext_str.to_lowercase().as_str());
+        }
+    }
+
+    // Also check by MIME type
+    if let Ok(Some(kind)) = infer::get_from_path(path) {
+        return kind.mime_type().starts_with("video/");
+    }
+
+    false
+}
+
+/// Format bytes to human-readable size
+pub fn format_size(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = KB * 1024;
+    const GB: u64 = MB * 1024;
+
+    if bytes >= GB {
+        format!("{:.2} GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.2} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.2} KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{} B", bytes)
+    }
+}
+
+/// Generate output path from input path
+pub fn generate_output_path(input: &str, format: Option<&str>) -> String {
+    let input_path = Path::new(input);
+    let stem = input_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("output");
+
+    let extension = format.unwrap_or_else(|| {
+        input_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("mp4")
+    });
+
+    let parent = input_path
+        .parent()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|| ".".to_string());
+
+    let output_name = format!("{}_compressed.{}", stem, extension);
+
+    if parent.is_empty() || parent == "." {
+        output_name
+    } else {
+        format!("{}/{}", parent, output_name)
+    }
+}
+
+/// Check if file exists
+pub fn file_exists(path: &str) -> bool {
+    Path::new(path).exists()
+}
+
+/// Delete file if exists
+pub fn delete_file(path: &str) -> Result<()> {
+    if file_exists(path) {
+        fs::remove_file(path)?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_size() {
+        assert_eq!(format_size(500), "500 B");
+        assert_eq!(format_size(1024), "1.00 KB");
+        assert_eq!(format_size(1536), "1.50 KB");
+        assert_eq!(format_size(1048576), "1.00 MB");
+        assert_eq!(format_size(1073741824), "1.00 GB");
+    }
+
+    #[test]
+    fn test_generate_output_path() {
+        assert_eq!(
+            generate_output_path("video.mp4", None),
+            "video_compressed.mp4"
+        );
+        assert_eq!(
+            generate_output_path("video.mp4", Some("webm")),
+            "video_compressed.webm"
+        );
+    }
+}

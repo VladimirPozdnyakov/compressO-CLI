@@ -36,28 +36,33 @@ cargo build --release
 # Binary will be at target/release/compresso (or compresso.exe on Windows)
 ```
 
-#### Windows Build Notes
+#### Windows Build Requirements
 
-On Windows, it's recommended to use the GNU toolchain to avoid conflicts with MSVC:
+1. **Rust** with MSVC toolchain:
+   ```powershell
+   rustup default stable-x86_64-pc-windows-msvc
+   ```
 
-```powershell
-# Install MSYS2 (if not installed)
-winget install MSYS2.MSYS2
+2. **Visual Studio Build Tools** with the following components:
+   - "Desktop development with C++" workload
+   - Windows 10/11 SDK
 
-# Install MinGW-w64 GCC (run in MSYS2 terminal)
-pacman -S mingw-w64-x86_64-gcc
+3. **Build from Developer Command Prompt** (to ensure correct `link.exe` is used):
+   ```powershell
+   # Open "Developer Command Prompt for VS 2022" or run:
+   "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Tools\VsDevCmd.bat" -arch=amd64
 
-# Add MinGW to PATH
-$env:PATH = "C:\msys64\mingw64\bin;$env:PATH"
+   # Then build
+   cargo build --release
+   ```
 
-# Switch Rust to GNU toolchain
-rustup default stable-x86_64-pc-windows-gnu
+   Or use the provided build scripts:
+   ```powershell
+   .\build.ps1   # PowerShell
+   .\build.bat   # Command Prompt
+   ```
 
-# Build
-cargo build --release
-```
-
-Alternatively, you can use the MSVC toolchain if you have Visual Studio Build Tools installed with the C++ workload.
+> **Note:** If you have Git installed, its `link.exe` may conflict with MSVC linker. Running from Developer Command Prompt resolves this.
 
 ## Usage
 

@@ -6,6 +6,7 @@ Fast video compression CLI tool powered by FFmpeg.
 
 ## Features
 
+- **Interactive mode** - drag & drop video onto exe or run without arguments
 - Fast video compression with customizable quality
 - Multiple presets: `thunderbolt` (fast) and `ironclad` (quality)
 - Format conversion (mp4, mov, webm, avi, mkv)
@@ -34,6 +35,13 @@ cd compressO-CLI
 cargo build --release
 
 # Binary will be at target/release/compresso (or compresso.exe on Windows)
+```
+
+#### Linux / macOS
+
+```bash
+chmod +x build.sh
+./build.sh
 ```
 
 #### Windows Build Requirements
@@ -65,6 +73,21 @@ cargo build --release
 > **Note:** If you have Git installed, its `link.exe` may conflict with MSVC linker. Running from Developer Command Prompt resolves this.
 
 ## Usage
+
+### Interactive Mode
+
+The easiest way to use CompressO:
+
+1. **Double-click** `compresso.exe` - opens interactive wizard where you can enter or paste video path
+2. **Drag & drop** video file onto `compresso.exe` - opens interactive wizard with file already selected
+
+Interactive mode guides you through:
+- Preset selection (Thunderbolt/Ironclad)
+- Quality setting (0-100)
+- Output format
+- Advanced options (resolution, FPS, mute)
+
+### Command Line Mode
 
 ```bash
 compresso <INPUT> [OUTPUT] [OPTIONS]

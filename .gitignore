@@ -10,31 +10,21 @@ Cargo.lock
 *.swo
 *~
 
+# Plan file
+PLAN.md
+
 # OS
 .DS_Store
 Thumbs.db
 
-# Build artifacts
-*.exe
-*.dll
-*.so
-*.dylib
-
 # Debug
 *.pdb
-
-# Test outputs
 *.log
 
 # Environment
 .env
 .env.local
 
-# Old GUI files (to be removed)
-/node_modules/
-/dist/
-/out/
-/.pnp/
-.pnp.js
-.yarn/
-*.tsbuildinfo
+# Build scripts
+build.bat
+build.ps1

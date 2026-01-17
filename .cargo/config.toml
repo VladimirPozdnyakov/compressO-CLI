@@ -1,0 +1,8 @@
+[target.x86_64-pc-windows-msvc]
+# Workaround for Git link.exe conflict
+# You may need to run from Developer Command Prompt for VS
+# or temporarily rename C:\Program Files\Git\usr\bin\link.exe
+
+[build]
+# Uncomment if you have MSVC Build Tools installed:
+# rustflags = ["-C", "link-arg=/NOLOGO"]

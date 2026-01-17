@@ -109,14 +109,6 @@ pub fn file_exists(path: &str) -> bool {
     Path::new(path).exists()
 }
 
-/// Delete file if exists
-pub fn delete_file(path: &str) -> Result<()> {
-    if file_exists(path) {
-        fs::remove_file(path)?;
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

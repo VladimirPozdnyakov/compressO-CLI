@@ -23,17 +23,8 @@ pub enum CompressoError {
     #[error("Video is corrupted or unsupported")]
     CorruptedVideo,
 
-    #[error("Unsupported format: {0}")]
-    UnsupportedFormat(String),
-
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
-
-    #[error("Failed to parse video info: {0}")]
-    ParseError(String),
-
-    #[error("{0}")]
-    Other(String),
 }
 
 pub type Result<T> = std::result::Result<T, CompressoError>;

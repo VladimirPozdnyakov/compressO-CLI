@@ -27,7 +27,7 @@ Fast video compression CLI tool powered by FFmpeg.
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/compressO-CLI.git
+git clone https://github.com/VladimirPozdnyakov/compressO-CLI.git
 cd compressO-CLI
 
 # Build release version
@@ -35,6 +35,29 @@ cargo build --release
 
 # Binary will be at target/release/compresso (or compresso.exe on Windows)
 ```
+
+#### Windows Build Notes
+
+On Windows, it's recommended to use the GNU toolchain to avoid conflicts with MSVC:
+
+```powershell
+# Install MSYS2 (if not installed)
+winget install MSYS2.MSYS2
+
+# Install MinGW-w64 GCC (run in MSYS2 terminal)
+pacman -S mingw-w64-x86_64-gcc
+
+# Add MinGW to PATH
+$env:PATH = "C:\msys64\mingw64\bin;$env:PATH"
+
+# Switch Rust to GNU toolchain
+rustup default stable-x86_64-pc-windows-gnu
+
+# Build
+cargo build --release
+```
+
+Alternatively, you can use the MSVC toolchain if you have Visual Studio Build Tools installed with the C++ workload.
 
 ## Usage
 

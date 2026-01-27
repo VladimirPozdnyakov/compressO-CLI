@@ -450,5 +450,6 @@ fn prompt_compression_settings(input_path: &str) -> Result<CompressionConfig> {
         transforms,
         overwrite: true,
         verbose: false,
+        json: false,
     })
 }

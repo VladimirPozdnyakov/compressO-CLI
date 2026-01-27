@@ -8,10 +8,11 @@ mod output;
 mod progress;
 
 use clap::Parser;
+use indicatif::ProgressBar;
 use std::env;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc,
+    Arc, Mutex,
 };
 
 use cli::Cli;
@@ -100,17 +101,27 @@ fn main() {
 }
 
 fn run_info_mode(cli: &Cli) {
-    print_header();
+    if !cli.json {
+        print_header();
+    }
 
     if !fs::file_exists(&cli.input) {
-        print_error_with_hint(&CompressoError::FileNotFound(cli.input.clone()));
+        if !cli.json {
+            print_error_with_hint(&CompressoError::FileNotFound(cli.input.clone()));
+        } else {
+            eprintln!("{{\"error\": \"File not found: {}\"}}", cli.input);
+        }
         std::process::exit(1);
     }
 
     let ffmpeg = match FFmpeg::new() {
         Ok(f) => f,
         Err(e) => {
-            print_error_with_hint(&e);
+            if !cli.json {
+                print_error_with_hint(&e);
+            } else {
+                eprintln!("{{\"error\": \"{}\"}}", e);
+            }
             std::process::exit(1);
         }
     };
@@ -118,7 +129,11 @@ fn run_info_mode(cli: &Cli) {
     let video_info = match ffmpeg.get_video_info(&cli.input) {
         Ok(info) => info,
         Err(e) => {
-            print_error_with_hint(&e);
+            if !cli.json {
+                print_error_with_hint(&e);
+            } else {
+                eprintln!("{{\"error\": \"{}\"}}", e);
+            }
             std::process::exit(1);
         }
     };
@@ -126,17 +141,27 @@ fn run_info_mode(cli: &Cli) {
     let file_metadata = match fs::get_file_metadata(&cli.input) {
         Ok(meta) => meta,
         Err(e) => {
-            print_error_with_hint(&e);
+            if !cli.json {
+                print_error_with_hint(&e);
+            } else {
+                eprintln!("{{\"error\": \"{}\"}}", e);
+            }
             std::process::exit(1);
         }
     };
 
-    print_video_info(&cli.input, &video_info, file_metadata.size);
+    if cli.json {
+        print_video_info_json(&cli.input, &video_info, file_metadata.size);
+    } else {
+        print_video_info(&cli.input, &video_info, file_metadata.size);
+    }
 }
 
 fn run(config: CompressionConfig, cancelled: Arc<AtomicBool>) -> error::Result<()> {
-    // Print header
-    print_header();
+    // Print header (skip in JSON mode)
+    if !config.json {
+        print_header();
+    }
 
     // Validate input file
     if !fs::file_exists(&config.input_path) {
@@ -163,41 +188,58 @@ fn run(config: CompressionConfig, cancelled: Arc<AtomicBool>) -> error::Result<(
         fs::generate_output_path(&config.input_path, format)
     });
 
-    // Print video info and config
-    print_video_info(&config.input_path, &video_info, file_metadata.size);
-    print_config(&config, &output_path);
+    // Print video info and config (skip in JSON mode)
+    if !config.json {
+        print_video_info(&config.input_path, &video_info, file_metadata.size);
+        print_config(&config, &output_path);
+    }
 
     // Check for overwrite
     if !config.overwrite && fs::file_exists(&output_path) {
-        print_warning(&format!(
-            "Output file already exists: {}",
-            output_path
-        ));
-        print_info("Use -y flag to overwrite.");
+        if !config.json {
+            print_warning(&format!(
+                "Output file already exists: {}",
+                output_path
+            ));
+            print_info("Use -y flag to overwrite.");
+        }
         return Err(CompressoError::InvalidOutput(format!(
             "File already exists: {}",
             output_path
         )));
     }
 
-    // Create progress bar
-    let progress_bar = create_progress_bar();
+    // Create progress bar (skip in JSON mode)
+    let json_mode = config.json;
+    let progress_bar = if !json_mode {
+        create_progress_bar()
+    } else {
+        Arc::new(Mutex::new(ProgressBar::hidden()))
+    };
     let progress_bar_clone = progress_bar.clone();
 
     // Start compression
     let start_time = std::time::Instant::now();
 
     let result = ffmpeg.compress_video(&config, cancelled.clone(), move |progress, speed, eta| {
-        update_progress(&progress_bar_clone, progress, speed, eta);
+        if !json_mode {
+            update_progress(&progress_bar_clone, progress, speed, eta);
+        }
     })?;
 
     let elapsed = start_time.elapsed();
 
-    // Finish progress bar
-    finish_progress(&progress_bar);
+    // Finish progress bar (skip in JSON mode)
+    if !config.json {
+        finish_progress(&progress_bar);
+    }
 
     // Print result
-    print_result(&result, elapsed);
+    if config.json {
+        print_result_json(&result, elapsed);
+    } else {
+        print_result(&result, elapsed);
+    }
 
     Ok(())
 }

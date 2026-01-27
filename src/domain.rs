@@ -150,6 +150,7 @@ pub struct CompressionConfig {
     pub transforms: VideoTransforms,
     pub overwrite: bool,
     pub verbose: bool,
+    pub json: bool,
 }
 
 impl Default for CompressionConfig {
@@ -167,6 +168,7 @@ impl Default for CompressionConfig {
             transforms: VideoTransforms::default(),
             overwrite: false,
             verbose: false,
+            json: false,
         }
     }
 }

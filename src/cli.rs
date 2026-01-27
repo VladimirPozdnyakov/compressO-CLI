@@ -79,6 +79,10 @@ pub struct Cli {
     /// Show video info without compressing
     #[arg(long)]
     pub info: bool,
+
+    /// Output results as JSON
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -186,6 +190,7 @@ impl Cli {
             transforms,
             overwrite: self.overwrite,
             verbose: self.verbose,
+            json: self.json,
         }
     }
 }

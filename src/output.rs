@@ -1,5 +1,6 @@
 use colored::*;
 use indicatif::{ProgressBar, ProgressStyle};
+use serde::Serialize;
 use std::sync::{Arc, Mutex};
 
 use crate::domain::{CompressionConfig, CompressionResult, Preset, VideoInfo};
@@ -430,4 +431,67 @@ pub fn estimate_output_size_range(original_size: u64, quality: u8, preset: Prese
     let max_size = (max_estimate as u64).clamp(absolute_min, absolute_max);
 
     (min_size, max_size)
+}
+
+// ============================================================================
+// JSON Output
+// ============================================================================
+
+/// JSON output for video information
+#[derive(Serialize)]
+pub struct VideoInfoJson {
+    pub path: String,
+    pub size: u64,
+    pub size_formatted: String,
+    #[serde(flatten)]
+    pub info: VideoInfo,
+}
+
+/// JSON output for compression result
+#[derive(Serialize)]
+pub struct CompressionResultJson {
+    pub success: bool,
+    pub elapsed_seconds: f64,
+    #[serde(flatten)]
+    pub result: CompressionResult,
+    pub saved_bytes: u64,
+    pub compression_ratio: f64,
+}
+
+/// Print video information as JSON
+pub fn print_video_info_json(path: &str, info: &VideoInfo, size: u64) {
+    let output = VideoInfoJson {
+        path: path.to_string(),
+        size,
+        size_formatted: format_size(size),
+        info: info.clone(),
+    };
+
+    match serde_json::to_string_pretty(&output) {
+        Ok(json) => println!("{}", json),
+        Err(e) => eprintln!("Error serializing to JSON: {}", e),
+    }
+}
+
+/// Print compression result as JSON
+pub fn print_result_json(result: &CompressionResult, elapsed: std::time::Duration) {
+    let saved = result.original_size.saturating_sub(result.compressed_size);
+    let ratio = if result.original_size > 0 {
+        (saved as f64 / result.original_size as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    let output = CompressionResultJson {
+        success: true,
+        elapsed_seconds: elapsed.as_secs_f64(),
+        result: result.clone(),
+        saved_bytes: saved,
+        compression_ratio: ratio,
+    };
+
+    match serde_json::to_string_pretty(&output) {
+        Ok(json) => println!("{}", json),
+        Err(e) => eprintln!("Error serializing to JSON: {}", e),
+    }
 }

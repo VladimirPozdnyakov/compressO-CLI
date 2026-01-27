@@ -220,6 +220,11 @@ fn prompt_compression_settings(input_path: &str) -> Result<CompressionConfig> {
     // Generate output path
     let output_path = fs::generate_output_path(input_path, format.map(|f| f.extension()));
 
+    // Get file size for estimate
+    let file_metadata = fs::get_file_metadata(input_path)?;
+    let original_size = file_metadata.size;
+    let (estimated_min, estimated_max) = crate::output::estimate_output_size_range(original_size, quality, preset);
+
     // Summary and confirmation
     println!();
     println!("{}", "━".repeat(50).dimmed());
@@ -236,6 +241,27 @@ fn prompt_compression_settings(input_path: &str) -> Result<CompressionConfig> {
         }
     );
     println!("  {} {}%", "Quality:".dimmed(), quality.to_string().bright_yellow());
+
+    // Show size estimate range
+    println!();
+    println!(
+        "  {} {}",
+        "Original size:".dimmed(),
+        fs::format_size(original_size).bright_white()
+    );
+    println!(
+        "  {} {} - {}",
+        "Est. output:".dimmed(),
+        fs::format_size(estimated_min).bright_cyan(),
+        fs::format_size(estimated_max).bright_cyan()
+    );
+    let avg_estimated = (estimated_min + estimated_max) / 2;
+    let savings_pct = ((original_size.saturating_sub(avg_estimated)) as f64 / original_size as f64) * 100.0;
+    println!(
+        "  {} ~{:.0}%",
+        "Est. savings:".dimmed(),
+        savings_pct.to_string().bright_green()
+    );
 
     if let Some(f) = format {
         println!("  {} {}", "Format:".dimmed(), f.extension().bright_white());

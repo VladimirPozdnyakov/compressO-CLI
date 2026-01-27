@@ -119,21 +119,40 @@ pub fn print_config(config: &CompressionConfig, output_path: &str) {
 
 /// Create and return a progress bar
 pub fn create_progress_bar() -> Arc<Mutex<ProgressBar>> {
-    let pb = ProgressBar::new(100);
+    let pb = ProgressBar::new(10000);
     pb.set_style(
         ProgressStyle::default_bar()
-            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}% {msg}")
+            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {msg}")
             .unwrap()
             .progress_chars("█▓░"),
     );
-    pb.set_message("Compressing...");
+    pb.set_message("0.00% | ETA: -- | Calculating...");
     Arc::new(Mutex::new(pb))
 }
 
-/// Update progress bar
-pub fn update_progress(pb: &Arc<Mutex<ProgressBar>>, progress: f64) {
+/// Update progress bar with speed and ETA
+pub fn update_progress(pb: &Arc<Mutex<ProgressBar>>, progress: f64, speed: f64, eta: Option<f64>) {
     if let Ok(pb) = pb.lock() {
-        pb.set_position(progress as u64);
+        // Convert progress from 0-100 range to 0-10000 range for precision
+        pb.set_position((progress * 100.0) as u64);
+
+        // Format ETA
+        let eta_msg = if let Some(eta_secs) = eta {
+            let eta_mins = (eta_secs / 60.0) as u64;
+            let eta_secs_rem = (eta_secs % 60.0) as u64;
+            format!("{:02}:{:02}", eta_mins, eta_secs_rem)
+        } else {
+            "--:--".to_string()
+        };
+
+        // Format the message with percentage, ETA, and speed
+        let speed_msg = if speed > 0.0 {
+            format!("{:.2}% | ETA: {} | {}/s", progress, eta_msg, format_size(speed as u64))
+        } else {
+            format!("{:.2}% | ETA: {} | Calculating...", progress, eta_msg)
+        };
+
+        pb.set_message(speed_msg);
     }
 }
 
@@ -155,11 +174,7 @@ pub fn print_result(result: &CompressionResult, elapsed: std::time::Duration) {
     );
     println!();
 
-    let saved = if result.original_size > result.compressed_size {
-        result.original_size - result.compressed_size
-    } else {
-        0
-    };
+    let saved = result.original_size.saturating_sub(result.compressed_size);
 
     let ratio = if result.original_size > 0 {
         (saved as f64 / result.original_size as f64) * 100.0

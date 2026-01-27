@@ -75,6 +75,27 @@ pub fn format_size(bytes: u64) -> String {
     }
 }
 
+/// Format duration in seconds to human-readable time
+#[allow(dead_code)]
+pub fn format_duration(seconds: f64) -> String {
+    if seconds < 0.0 {
+        return "0s".to_string();
+    }
+
+    let total_seconds = seconds.round() as u64;
+    let hours = total_seconds / 3600;
+    let minutes = (total_seconds % 3600) / 60;
+    let secs = total_seconds % 60;
+
+    if hours > 0 {
+        format!("{}h {}m {}s", hours, minutes, secs)
+    } else if minutes > 0 {
+        format!("{}m {}s", minutes, secs)
+    } else {
+        format!("{}s", secs)
+    }
+}
+
 /// Generate output path from input path
 pub fn generate_output_path(input: &str, format: Option<&str>) -> String {
     let input_path = Path::new(input);
@@ -120,6 +141,20 @@ mod tests {
         assert_eq!(format_size(1536), "1.50 KB");
         assert_eq!(format_size(1048576), "1.00 MB");
         assert_eq!(format_size(1073741824), "1.00 GB");
+    }
+
+    #[test]
+    fn test_format_duration() {
+        assert_eq!(format_duration(0.0), "0s");
+        assert_eq!(format_duration(30.0), "30s");
+        assert_eq!(format_duration(45.7), "46s");
+        assert_eq!(format_duration(90.0), "1m 30s");
+        assert_eq!(format_duration(125.0), "2m 5s");
+        assert_eq!(format_duration(3600.0), "1h 0m 0s");
+        assert_eq!(format_duration(3661.0), "1h 1m 1s");
+        assert_eq!(format_duration(5025.0), "1h 23m 45s");
+        assert_eq!(format_duration(330.0), "5m 30s");
+        assert_eq!(format_duration(-10.0), "0s");
     }
 
     #[test]

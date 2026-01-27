@@ -5,6 +5,7 @@ mod ffmpeg;
 mod fs;
 mod interactive;
 mod output;
+mod progress;
 
 use clap::Parser;
 use std::env;
@@ -186,8 +187,8 @@ fn run(config: CompressionConfig, cancelled: Arc<AtomicBool>) -> error::Result<(
     // Start compression
     let start_time = std::time::Instant::now();
 
-    let result = ffmpeg.compress_video(&config, cancelled.clone(), move |progress| {
-        update_progress(&progress_bar_clone, progress);
+    let result = ffmpeg.compress_video(&config, cancelled.clone(), move |progress, speed, eta| {
+        update_progress(&progress_bar_clone, progress, speed, eta);
     })?;
 
     let elapsed = start_time.elapsed();

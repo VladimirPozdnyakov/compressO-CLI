@@ -7,12 +7,13 @@ use std::{
     process::{Command, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc,
+        Arc, Mutex,
     },
 };
 
 use crate::domain::{CompressionConfig, CompressionResult, Preset, VideoInfo, VideoTransforms};
 use crate::error::{CompressoError, Result};
+use crate::progress::ProgressMetrics;
 
 /// FFmpeg wrapper for video compression
 pub struct FFmpeg {
@@ -122,7 +123,7 @@ impl FFmpeg {
         progress_callback: F,
     ) -> Result<CompressionResult>
     where
-        F: Fn(f64) + Send + 'static,
+        F: Fn(f64, f64, Option<f64>) + Send + 'static,
     {
         let input_path = &config.input_path;
 
@@ -157,6 +158,13 @@ impl FFmpeg {
 
         // Get original size
         let original_size = std::fs::metadata(input_path)?.len();
+
+        // Create progress metrics for tracking speed and ETA
+        let progress_metrics = Arc::new(Mutex::new(ProgressMetrics::new(
+            original_size,
+            Some(total_duration),
+        )));
+        let metrics_for_thread = progress_metrics.clone();
 
         // Build FFmpeg arguments
         let args = self.build_args(config, &output_path, &output_format);
@@ -225,7 +233,18 @@ impl FFmpeg {
                 if cancelled_for_progress.load(Ordering::Relaxed) {
                     break;
                 }
-                progress_callback(progress);
+
+                // Update progress metrics with current progress and get speed/ETA
+                let (speed, eta) = if let Ok(mut metrics) = metrics_for_thread.lock() {
+                    metrics.update_progress(progress);
+                    let speed = metrics.calculate_speed();
+                    let eta = metrics.calculate_eta();
+                    (speed, eta)
+                } else {
+                    (0.0, None)
+                };
+
+                progress_callback(progress, speed, eta);
             }
         });
 

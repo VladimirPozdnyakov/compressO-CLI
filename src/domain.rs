@@ -56,9 +56,9 @@ pub struct VideoTransforms {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Preset {
     /// Fast compression with good quality
-    #[default]
     Thunderbolt,
     /// Best quality, slower compression
+    #[default]
     Ironclad,
 }
 

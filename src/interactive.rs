@@ -102,8 +102,8 @@ fn prompt_compression_settings(input_path: &str) -> Result<CompressionConfig> {
     println!();
 
     let presets = vec![
-        "Thunderbolt (fast, good quality) [default]",
-        "Ironclad (slow, best quality)",
+        "Ironclad (slow, best quality) [default]",
+        "Thunderbolt (fast, good quality)",
     ];
 
     let preset_idx = Select::with_theme(&theme)
@@ -114,8 +114,8 @@ fn prompt_compression_settings(input_path: &str) -> Result<CompressionConfig> {
         .unwrap_or(0);
 
     let preset = match preset_idx {
-        1 => Preset::Ironclad,
-        _ => Preset::Thunderbolt,
+        1 => Preset::Thunderbolt,
+        _ => Preset::Ironclad,
     };
 
     // Quality

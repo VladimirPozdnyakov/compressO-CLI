@@ -46,7 +46,7 @@ fn main() {
                 std::process::exit(0);
             }
             Err(e) => {
-                print_error(&e.to_string());
+                print_error_with_hint(&e);
                 interactive::wait_for_exit();
                 std::process::exit(1);
             }
@@ -84,7 +84,7 @@ fn main() {
                 std::process::exit(130); // Standard exit code for Ctrl+C
             }
             _ => {
-                print_error(&e.to_string());
+                print_error_with_hint(&e);
                 if is_interactive {
                     interactive::wait_for_exit();
                 }
@@ -103,14 +103,14 @@ fn run_info_mode(cli: &Cli) {
     print_header();
 
     if !fs::file_exists(&cli.input) {
-        print_error(&format!("File not found: {}", cli.input));
+        print_error_with_hint(&CompressoError::FileNotFound(cli.input.clone()));
         std::process::exit(1);
     }
 
     let ffmpeg = match FFmpeg::new() {
         Ok(f) => f,
         Err(e) => {
-            print_error(&e.to_string());
+            print_error_with_hint(&e);
             std::process::exit(1);
         }
     };
@@ -118,7 +118,7 @@ fn run_info_mode(cli: &Cli) {
     let video_info = match ffmpeg.get_video_info(&cli.input) {
         Ok(info) => info,
         Err(e) => {
-            print_error(&e.to_string());
+            print_error_with_hint(&e);
             std::process::exit(1);
         }
     };
@@ -126,7 +126,7 @@ fn run_info_mode(cli: &Cli) {
     let file_metadata = match fs::get_file_metadata(&cli.input) {
         Ok(meta) => meta,
         Err(e) => {
-            print_error(&e.to_string());
+            print_error_with_hint(&e);
             std::process::exit(1);
         }
     };

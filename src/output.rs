@@ -237,7 +237,9 @@ pub fn print_result(result: &CompressionResult, elapsed: std::time::Duration) {
     println!();
 }
 
-/// Print error message
+/// Print error message (simple version without hints)
+/// For errors with actionable hints, use print_error_with_hint instead
+#[allow(dead_code)]
 pub fn print_error(message: &str) {
     eprintln!();
     eprintln!(
@@ -245,6 +247,117 @@ pub fn print_error(message: &str) {
         "✗".bright_red().bold(),
         message.bright_red()
     );
+    eprintln!();
+}
+
+/// Print error message with actionable hints based on error type
+pub fn print_error_with_hint(error: &crate::error::CompressoError) {
+    use crate::error::CompressoError;
+
+    eprintln!();
+    eprintln!(
+        "{} {}",
+        "✗".bright_red().bold(),
+        error.to_string().bright_red()
+    );
+    eprintln!();
+
+    // Provide specific, actionable hints based on error type
+    let hint = match error {
+        CompressoError::FfmpegNotFound => {
+            "💡 How to install FFmpeg:\n\
+             \n\
+             Windows:\n\
+               • winget install Gyan.FFmpeg\n\
+               • or download from https://ffmpeg.org/download.html\n\
+             \n\
+             macOS:\n\
+               • brew install ffmpeg\n\
+             \n\
+             Linux:\n\
+               • sudo apt install ffmpeg  (Debian/Ubuntu)\n\
+               • sudo dnf install ffmpeg  (Fedora)\n\
+               • sudo pacman -S ffmpeg    (Arch)"
+        }
+        CompressoError::FileNotFound(path) => {
+            &format!(
+                "💡 Suggestions:\n\
+                 \n\
+                   • Check if the file path is correct: {}\n\
+                   • Make sure you have permission to access the file\n\
+                   • Try using an absolute path instead of a relative path\n\
+                   • On Windows, use quotes around paths with spaces",
+                path
+            )
+        }
+        CompressoError::InvalidInput(_) => {
+            "💡 Supported video formats:\n\
+             \n\
+               • MP4 (.mp4)\n\
+               • MOV (.mov)\n\
+               • WebM (.webm)\n\
+               • AVI (.avi)\n\
+               • MKV (.mkv)\n\
+               • FLV (.flv)\n\
+               • WMV (.wmv)\n\
+             \n\
+             Check that your file has a valid video extension and is not corrupted."
+        }
+        CompressoError::CorruptedVideo => {
+            "💡 Possible solutions:\n\
+             \n\
+               • Try playing the video in a media player to verify it works\n\
+               • The file might be incomplete or corrupted during download\n\
+               • Try re-encoding the video with a different tool first\n\
+               • Check if the file is actually a video (not renamed from another format)"
+        }
+        CompressoError::InvalidOutput(path) => {
+            &format!(
+                "💡 Suggestions:\n\
+                 \n\
+                   • Check if the output directory exists: {}\n\
+                   • Make sure you have write permissions to the directory\n\
+                   • Ensure the filename doesn't contain invalid characters: < > : \" / \\ | ? *\n\
+                   • Try using a different output location",
+                path
+            )
+        }
+        CompressoError::FfmpegError(msg) => {
+            &format!(
+                "💡 FFmpeg encountered an error:\n\
+                 \n\
+                   Error: {}\n\
+                 \n\
+                   Possible solutions:\n\
+                   • Try reducing quality or changing preset\n\
+                   • Check if there's enough disk space\n\
+                   • Verify the input video is not corrupted\n\
+                   • Try updating FFmpeg to the latest version",
+                msg
+            )
+        }
+        CompressoError::Io(io_error) => {
+            &format!(
+                "💡 File system error:\n\
+                 \n\
+                   {}\n\
+                 \n\
+                   Common solutions:\n\
+                   • Check available disk space\n\
+                   • Verify you have read/write permissions\n\
+                   • Close other programs that might be using the file\n\
+                   • Try running with administrator/sudo privileges if needed",
+                io_error
+            )
+        }
+        CompressoError::Cancelled => {
+            "💡 Compression was cancelled.\n\
+             \n\
+             You can start a new compression anytime."
+        }
+    };
+
+    eprintln!("{}", hint.bright_blue());
     eprintln!();
 }
 

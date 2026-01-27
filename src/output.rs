@@ -163,6 +163,23 @@ pub fn finish_progress(pb: &Arc<Mutex<ProgressBar>>) {
     }
 }
 
+/// Generate a visual size comparison bar
+fn create_size_bar(size: u64, max_size: u64, bar_width: usize) -> String {
+    if max_size == 0 {
+        return "░".repeat(bar_width);
+    }
+
+    let filled_width = ((size as f64 / max_size as f64) * bar_width as f64) as usize;
+    let filled_width = filled_width.min(bar_width);
+    let empty_width = bar_width.saturating_sub(filled_width);
+
+    format!(
+        "{}{}",
+        "█".repeat(filled_width).bright_cyan(),
+        "░".repeat(empty_width).dimmed()
+    )
+}
+
 /// Print compression result
 pub fn print_result(result: &CompressionResult, elapsed: std::time::Duration) {
     println!();
@@ -182,16 +199,24 @@ pub fn print_result(result: &CompressionResult, elapsed: std::time::Duration) {
         0.0
     };
 
+    // Visual size comparison
+    let bar_width = 40;
+    let original_bar = create_size_bar(result.original_size, result.original_size, bar_width);
+    let compressed_bar = create_size_bar(result.compressed_size, result.original_size, bar_width);
+
     println!(
-        "  {} {}",
+        "  {} {} {}",
         "Original:".dimmed(),
+        original_bar,
         format_size(result.original_size).bright_white()
     );
     println!(
-        "  {} {}",
+        "  {} {} {}",
         "Compressed:".dimmed(),
+        compressed_bar,
         format_size(result.compressed_size).bright_green()
     );
+    println!();
     println!(
         "  {} {} ({:.1}%)",
         "Saved:".dimmed(),

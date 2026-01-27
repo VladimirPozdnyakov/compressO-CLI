@@ -1,8 +1,8 @@
 use colored::*;
-use dialoguer::{theme::ColorfulTheme, Confirm, Input, Select};
+use dialoguer::{theme::ColorfulTheme, Input, Select};
 use std::io::{self, Write};
 
-use crate::domain::{CompressionConfig, OutputFormat, Preset, VideoTransforms};
+use crate::domain::{CompressionConfig, CropCoordinates, FlipOptions, OutputFormat, Preset, VideoTransforms};
 use crate::error::Result;
 use crate::fs;
 
@@ -159,16 +159,22 @@ fn prompt_compression_settings(input_path: &str) -> Result<CompressionConfig> {
     };
 
     // Advanced settings
-    let show_advanced = Confirm::with_theme(&theme)
+    let advanced_options = vec!["No", "Yes"];
+    let show_advanced = Select::with_theme(&theme)
         .with_prompt("Configure advanced settings?")
-        .default(false)
+        .items(&advanced_options)
+        .default(0)
         .interact()
-        .unwrap_or(false);
+        .unwrap_or(0) == 1;
 
     let mut width: Option<u32> = None;
     let mut height: Option<u32> = None;
     let mut fps: Option<u32> = None;
     let mut mute = false;
+    let mut rotate: Option<i32> = None;
+    let mut flip_horizontal = false;
+    let mut flip_vertical = false;
+    let mut crop: Option<CropCoordinates> = None;
 
     if show_advanced {
         println!();
@@ -210,11 +216,100 @@ fn prompt_compression_settings(input_path: &str) -> Result<CompressionConfig> {
         }
 
         // Mute
-        mute = Confirm::with_theme(&theme)
+        let mute_options = vec!["No", "Yes"];
+        let mute_idx = Select::with_theme(&theme)
             .with_prompt("Remove audio?")
-            .default(false)
+            .items(&mute_options)
+            .default(0)
             .interact()
-            .unwrap_or(false);
+            .unwrap_or(0);
+        mute = mute_idx == 1;
+
+        println!();
+        println!("{}", "Transform Options".bright_white().bold());
+        println!("{}", "─".repeat(30).dimmed());
+        println!();
+
+        // Rotate
+        let rotation_options = vec![
+            "None (keep original)",
+            "90° clockwise",
+            "180°",
+            "270° clockwise (90° counter-clockwise)",
+        ];
+
+        let rotation_idx = Select::with_theme(&theme)
+            .with_prompt("Rotate video")
+            .items(&rotation_options)
+            .default(0)
+            .interact()
+            .unwrap_or(0);
+
+        rotate = match rotation_idx {
+            1 => Some(90),
+            2 => Some(180),
+            3 => Some(270),
+            _ => None,
+        };
+
+        // Flip
+        let flip_h_options = vec!["No", "Yes"];
+        let flip_h_idx = Select::with_theme(&theme)
+            .with_prompt("Flip horizontally (mirror)?")
+            .items(&flip_h_options)
+            .default(0)
+            .interact()
+            .unwrap_or(0);
+        flip_horizontal = flip_h_idx == 1;
+
+        let flip_v_options = vec!["No", "Yes"];
+        let flip_v_idx = Select::with_theme(&theme)
+            .with_prompt("Flip vertically?")
+            .items(&flip_v_options)
+            .default(0)
+            .interact()
+            .unwrap_or(0);
+        flip_vertical = flip_v_idx == 1;
+
+        // Crop
+        println!();
+        println!("{}", "Crop video (format: WIDTHxHEIGHT:X:Y)".dimmed());
+        println!("{}", "Example: 1920x1080:0:0 (crop to 1920x1080 from top-left corner)".dimmed());
+
+        let crop_input: String = Input::with_theme(&theme)
+            .with_prompt("Crop")
+            .allow_empty(true)
+            .interact_text()
+            .unwrap_or_default();
+
+        if !crop_input.is_empty() {
+            // Parse crop format: WxH:X:Y
+            let parts: Vec<&str> = crop_input.split(':').collect();
+            if parts.len() == 2 {
+                let size_parts: Vec<&str> = parts[0].split('x').collect();
+                let pos_parts: Vec<&str> = parts[1].split(':').collect();
+
+                if size_parts.len() == 2 {
+                    let crop_width = size_parts[0].parse().ok();
+                    let crop_height = size_parts[1].parse().ok();
+                    let crop_x = parts[1].split(':').next().and_then(|s| s.parse().ok()).unwrap_or(0);
+                    let crop_y = if pos_parts.len() > 1 {
+                        pos_parts[1].parse().ok().unwrap_or(0)
+                    } else {
+                        0
+                    };
+
+                    if let (Some(w), Some(h)) = (crop_width, crop_height) {
+                        crop = Some(CropCoordinates {
+                            width: w,
+                            height: h,
+                            x: crop_x,
+                            y: crop_y,
+                        });
+                    }
+                }
+            }
+        }
     }
 
     // Generate output path
@@ -279,14 +374,45 @@ fn prompt_compression_settings(input_path: &str) -> Result<CompressionConfig> {
         println!("  {} {}", "Audio:".dimmed(), "muted".bright_red());
     }
 
+    // Display transforms if any
+    if rotate.is_some() || flip_horizontal || flip_vertical || crop.is_some() {
+        println!();
+        if let Some(r) = rotate {
+            println!("  {} {}°", "Rotate:".dimmed(), r.to_string().bright_cyan());
+        }
+
+        if flip_horizontal || flip_vertical {
+            let flip_desc = match (flip_horizontal, flip_vertical) {
+                (true, true) => "horizontal + vertical",
+                (true, false) => "horizontal",
+                (false, true) => "vertical",
+                _ => "",
+            };
+            println!("  {} {}", "Flip:".dimmed(), flip_desc.bright_cyan());
+        }
+
+        if let Some(c) = &crop {
+            println!(
+                "  {} {}x{} at ({}, {})",
+                "Crop:".dimmed(),
+                c.width.to_string().bright_cyan(),
+                c.height.to_string().bright_cyan(),
+                c.x,
+                c.y
+            );
+        }
+    }
+
     println!("{}", "━".repeat(50).dimmed());
     println!();
 
-    let proceed = Confirm::with_theme(&theme)
+    let proceed_options = vec!["No", "Yes"];
+    let proceed = Select::with_theme(&theme)
         .with_prompt("Start compression?")
-        .default(true)
+        .items(&proceed_options)
+        .default(1)
         .interact()
-        .unwrap_or(false);
+        .unwrap_or(1) == 1;
 
     if !proceed {
         println!("{}", "Compression cancelled.".bright_yellow());
@@ -294,6 +420,22 @@ fn prompt_compression_settings(input_path: &str) -> Result<CompressionConfig> {
     }
 
     println!();
+
+    // Build transforms from user input
+    let flip = if flip_horizontal || flip_vertical {
+        Some(FlipOptions {
+            horizontal: flip_horizontal,
+            vertical: flip_vertical,
+        })
+    } else {
+        None
+    };
+
+    let transforms = VideoTransforms {
+        crop,
+        rotate,
+        flip,
+    };
 
     Ok(CompressionConfig {
         input_path: input_path.to_string(),
@@ -305,7 +447,7 @@ fn prompt_compression_settings(input_path: &str) -> Result<CompressionConfig> {
         height,
         fps,
         mute,
-        transforms: VideoTransforms::default(),
+        transforms,
         overwrite: true,
         verbose: false,
     })

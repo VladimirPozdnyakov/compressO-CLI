@@ -123,16 +123,17 @@ pub fn create_progress_bar() -> Arc<Mutex<ProgressBar>> {
     let pb = ProgressBar::new(10000);
     pb.set_style(
         ProgressStyle::default_bar()
-            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {msg}")
+            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {msg}\n{prefix}")
             .unwrap()
             .progress_chars("█▓░"),
     );
     pb.set_message("0.00% | ETA: -- | Calculating...");
+    pb.set_prefix("");
     Arc::new(Mutex::new(pb))
 }
 
-/// Update progress bar with speed and ETA
-pub fn update_progress(pb: &Arc<Mutex<ProgressBar>>, progress: f64, speed: f64, eta: Option<f64>) {
+/// Update progress bar with frame info and ETA
+pub fn update_progress(pb: &Arc<Mutex<ProgressBar>>, progress: f64, current_frame: u32, total_frames: u32, fps: f64, eta: Option<f64>) {
     if let Ok(pb) = pb.lock() {
         // Convert progress from 0-100 range to 0-10000 range for precision
         pb.set_position((progress * 100.0) as u64);
@@ -146,14 +147,18 @@ pub fn update_progress(pb: &Arc<Mutex<ProgressBar>>, progress: f64, speed: f64, 
             "--:--".to_string()
         };
 
-        // Format the message with percentage, ETA, and speed
-        let speed_msg = if speed > 0.0 {
-            format!("{:.2}% | ETA: {} | {}/s", progress, eta_msg, format_size(speed as u64))
+        // Format the message with percentage, ETA, and FPS
+        let speed_msg = if fps > 0.0 {
+            format!("{:.2}% | ETA: {} | {:.1} fps", progress, eta_msg, fps)
         } else {
             format!("{:.2}% | ETA: {} | Calculating...", progress, eta_msg)
         };
 
         pb.set_message(speed_msg);
+
+        // Set frame count info below the progress bar
+        let frame_info = format!("Frame {}/{}", current_frame, total_frames);
+        pb.set_prefix(frame_info);
     }
 }
 

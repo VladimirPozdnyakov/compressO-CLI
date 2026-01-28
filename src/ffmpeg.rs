@@ -123,7 +123,7 @@ impl FFmpeg {
         progress_callback: F,
     ) -> Result<CompressionResult>
     where
-        F: Fn(f64, f64, Option<f64>) + Send + 'static,
+        F: Fn(f64, u32, u32, f64, Option<f64>) + Send + 'static,
     {
         let input_path = &config.input_path;
 
@@ -134,6 +134,8 @@ impl FFmpeg {
         // Get video info for progress calculation
         let video_info = self.get_video_info(input_path)?;
         let total_duration = video_info.duration_seconds.unwrap_or(0.0);
+        let fps = video_info.fps.unwrap_or(30.0);
+        let total_frames = (total_duration * fps as f64) as u32;
 
         // Determine output format and path
         let output_format = config.format.map(|f| f.extension().to_string()).unwrap_or_else(|| {
@@ -187,8 +189,8 @@ impl FFmpeg {
         let child_clone = child.clone();
         let child_for_cancel = child.clone();
 
-        // Channel for progress updates
-        let (tx, rx): (Sender<f64>, Receiver<f64>) = crossbeam_channel::unbounded();
+        // Channel for progress updates (progress, current_frame)
+        let (tx, rx): (Sender<(f64, u32)>, Receiver<(f64, u32)>) = crossbeam_channel::unbounded();
 
         // Spawn thread to read stdout (progress)
         let cancelled_clone = cancelled.clone();
@@ -197,10 +199,20 @@ impl FFmpeg {
                 let reader = BufReader::new(stdout);
                 let re = Regex::new(r"out_time_ms=(\d+)").unwrap();
                 let re_time = Regex::new(r"out_time=(\d{2}:\d{2}:\d{2}\.\d+)").unwrap();
+                let re_frame = Regex::new(r"frame=\s*(\d+)").unwrap();
+
+                let mut current_frame: u32 = 0;
 
                 for line in reader.lines().map_while(|l| l.ok()) {
                     if cancelled_clone.load(Ordering::Relaxed) {
                         break;
+                    }
+
+                    // Parse frame number
+                    if let Some(cap) = re_frame.captures(&line) {
+                        if let Ok(frame) = cap[1].parse::<u32>() {
+                            current_frame = frame;
+                        }
                     }
 
                     // Try to parse out_time_ms first
@@ -209,7 +221,7 @@ impl FFmpeg {
                             let current_seconds = ms / 1_000_000.0;
                             if total_duration > 0.0 {
                                 let progress = (current_seconds / total_duration * 100.0).min(100.0);
-                                let _ = tx.try_send(progress);
+                                let _ = tx.try_send((progress, current_frame));
                             }
                         }
                     }
@@ -218,7 +230,7 @@ impl FFmpeg {
                         if let Some(seconds) = Self::duration_to_seconds(&cap[1]) {
                             if total_duration > 0.0 {
                                 let progress = (seconds / total_duration * 100.0).min(100.0);
-                                let _ = tx.try_send(progress);
+                                let _ = tx.try_send((progress, current_frame));
                             }
                         }
                     }
@@ -228,23 +240,37 @@ impl FFmpeg {
 
         // Spawn thread for progress callback
         let cancelled_for_progress = cancelled.clone();
+        let mut last_frame: u32 = 0;
+        let mut last_time = std::time::Instant::now();
+        let mut last_fps: f64 = 0.0;
+
         std::thread::spawn(move || {
-            while let Ok(progress) = rx.recv() {
+            while let Ok((progress, current_frame)) = rx.recv() {
                 if cancelled_for_progress.load(Ordering::Relaxed) {
                     break;
                 }
 
-                // Update progress metrics with current progress and get speed/ETA
-                let (speed, eta) = if let Ok(mut metrics) = metrics_for_thread.lock() {
+                // Calculate FPS (frames per second)
+                let now = std::time::Instant::now();
+                let elapsed = now.duration_since(last_time).as_secs_f64();
+
+                // Update FPS calculation if enough time has passed
+                if elapsed > 0.3 && current_frame > last_frame {
+                    let frames_processed = current_frame.saturating_sub(last_frame);
+                    last_fps = frames_processed as f64 / elapsed;
+                    last_frame = current_frame;
+                    last_time = now;
+                }
+
+                // Update progress metrics to get ETA
+                let eta = if let Ok(mut metrics) = metrics_for_thread.lock() {
                     metrics.update_progress(progress);
-                    let speed = metrics.calculate_speed();
-                    let eta = metrics.calculate_eta();
-                    (speed, eta)
+                    metrics.calculate_eta()
                 } else {
-                    (0.0, None)
+                    None
                 };
 
-                progress_callback(progress, speed, eta);
+                progress_callback(progress, current_frame, total_frames, last_fps, eta);
             }
         });
 

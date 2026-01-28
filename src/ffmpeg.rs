@@ -110,16 +110,23 @@ impl FFmpeg {
     }
 
     /// Get video information
+    ///
+    /// Note: This function does not pre-check file existence to avoid TOCTOU race conditions.
+    /// FFmpeg will atomically open and validate the file.
     pub fn get_video_info(&self, video_path: &str) -> Result<VideoInfo> {
-        if !Path::new(video_path).exists() {
-            return Err(CompressoError::FileNotFound(video_path.to_string()));
-        }
-
         let output = Command::new(&self.ffmpeg_path)
             .args(["-i", video_path, "-hide_banner"])
             .stderr(Stdio::piped())
             .stdout(Stdio::null())
             .output()?;
+
+        // Check if FFmpeg failed (likely file not found or invalid)
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if stderr.contains("No such file") || stderr.contains("does not exist") {
+                return Err(CompressoError::FileNotFound(video_path.to_string()));
+            }
+        }
 
         let stderr = String::from_utf8_lossy(&output.stderr);
 
@@ -171,6 +178,16 @@ impl FFmpeg {
     }
 
     /// Compress video with progress callback
+    ///
+    /// # Security
+    ///
+    /// This function avoids TOCTOU race conditions by:
+    /// - Not pre-checking input file existence (FFmpeg opens it atomically)
+    /// - Using unique temporary filenames to avoid collisions
+    /// - Atomically renaming temp file to final output on success
+    ///
+    /// Note: Output overwrite protection check still has a small race window.
+    /// Use unique output paths or enable overwrite mode for maximum safety.
     pub fn compress_video<F>(
         &self,
         config: &CompressionConfig,
@@ -182,11 +199,7 @@ impl FFmpeg {
     {
         let input_path = &config.input_path;
 
-        if !Path::new(input_path).exists() {
-            return Err(CompressoError::FileNotFound(input_path.clone()));
-        }
-
-        // Get video info for progress calculation
+        // Get video info for progress calculation (will fail atomically if file doesn't exist)
         let video_info = self.get_video_info(input_path)?;
         let total_duration = video_info.duration_seconds.unwrap_or(0.0);
         let fps = video_info.fps.unwrap_or(30.0);
@@ -205,12 +218,27 @@ impl FFmpeg {
             crate::fs::generate_output_path(input_path, Some(&output_format))
         });
 
-        // Check if output exists and overwrite is not set
-        if !config.overwrite && Path::new(&output_path).exists() {
-            return Err(CompressoError::InvalidOutput(format!(
-                "File already exists: {}. Use -y to overwrite.",
-                output_path
-            )));
+        // Atomically check if output exists and prevent overwrite if not set
+        // This uses create_new() which atomically fails if file exists
+        if !config.overwrite {
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&output_path)
+            {
+                Ok(f) => {
+                    // File didn't exist, we created it. Remove it immediately.
+                    drop(f);
+                    let _ = std::fs::remove_file(&output_path);
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    return Err(CompressoError::InvalidOutput(format!(
+                        "File already exists: {}. Use -y to overwrite.",
+                        output_path
+                    )));
+                }
+                Err(e) => return Err(e.into()),
+            }
         }
 
         // Create temporary output path for atomic write

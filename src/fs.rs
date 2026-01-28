@@ -5,14 +5,20 @@ use crate::domain::FileMetadata;
 use crate::error::{CompressoError, Result};
 
 /// Get metadata of a file from its path
+///
+/// Note: This function avoids TOCTOU race conditions by directly attempting
+/// to read metadata without pre-checking file existence.
 pub fn get_file_metadata(path: &str) -> Result<FileMetadata> {
     let file_path = Path::new(path);
 
-    if !file_path.exists() {
-        return Err(CompressoError::FileNotFound(path.to_string()));
-    }
-
-    let metadata = fs::metadata(path)?;
+    // Atomically get metadata (will fail if file doesn't exist)
+    let metadata = match fs::metadata(path) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Err(CompressoError::FileNotFound(path.to_string()));
+        }
+        Err(e) => return Err(e.into()),
+    };
     let mime_type = infer::get_from_path(path)
         .ok()
         .flatten()
@@ -126,28 +132,51 @@ pub fn generate_output_path(input: &str, format: Option<&str>) -> String {
 }
 
 /// Check if file exists
+///
+/// # Security Warning
+///
+/// This function is subject to TOCTOU (Time-of-Check Time-of-Use) race conditions.
+/// The file may be created, deleted, or replaced between this check and subsequent use.
+///
+/// For security-critical operations, prefer atomic operations like:
+/// - `std::fs::OpenOptions::new().create_new(true)` for exclusive creation
+/// - Direct file operations that fail atomically if the file doesn't exist
+///
+/// This function should only be used for non-critical checks like user feedback.
 pub fn file_exists(path: &str) -> bool {
     Path::new(path).exists()
 }
 
 /// Get all video files from a directory
+///
+/// Note: This function avoids TOCTOU race conditions by directly attempting
+/// to read the directory without pre-checking existence.
 pub fn get_video_files_in_directory(dir_path: &str) -> Result<Vec<String>> {
     let path = Path::new(dir_path);
 
-    if !path.exists() {
-        return Err(CompressoError::FileNotFound(dir_path.to_string()));
-    }
-
-    if !path.is_dir() {
-        return Err(CompressoError::InvalidInput(format!(
-            "{} is not a directory",
-            dir_path
-        )));
-    }
-
     let mut video_files = Vec::new();
 
-    for entry in fs::read_dir(path)? {
+    // Atomically open directory (will fail if doesn't exist or not a directory)
+    let read_dir = match fs::read_dir(path) {
+        Ok(rd) => rd,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Err(CompressoError::FileNotFound(dir_path.to_string()));
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+            return Err(CompressoError::InvalidInput(format!(
+                "Permission denied: {}",
+                dir_path
+            )));
+        }
+        Err(_) => {
+            return Err(CompressoError::InvalidInput(format!(
+                "{} is not a valid directory",
+                dir_path
+            )));
+        }
+    };
+
+    for entry in read_dir {
         let entry = entry?;
         let entry_path = entry.path();
 

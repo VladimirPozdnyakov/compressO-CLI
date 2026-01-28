@@ -495,3 +495,206 @@ pub fn print_result_json(result: &CompressionResult, elapsed: std::time::Duratio
         Err(e) => eprintln!("Error serializing to JSON: {}", e),
     }
 }
+
+// ============================================================================
+// Batch Processing Output
+// ============================================================================
+
+/// Result of processing a single file in batch
+#[derive(Debug, Clone)]
+pub struct BatchFileResult {
+    pub input_path: String,
+    pub success: bool,
+    pub result: Option<CompressionResult>,
+    pub error: Option<String>,
+    pub elapsed: std::time::Duration,
+}
+
+/// Summary of batch processing
+#[derive(Serialize)]
+pub struct BatchSummary {
+    pub total_files: usize,
+    pub successful: usize,
+    pub failed: usize,
+    pub total_original_size: u64,
+    pub total_compressed_size: u64,
+    pub total_saved: u64,
+    pub average_compression_ratio: f64,
+    pub total_elapsed_seconds: f64,
+    pub results: Vec<BatchFileResultJson>,
+}
+
+#[derive(Serialize)]
+pub struct BatchFileResultJson {
+    pub input_path: String,
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<CompressionResult>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    pub elapsed_seconds: f64,
+}
+
+/// Print batch processing summary
+pub fn print_batch_summary(results: &[BatchFileResult], total_elapsed: std::time::Duration) {
+    println!();
+    println!("{}", "━".repeat(50).dimmed());
+    println!(
+        "{} {}",
+        "✓".bright_green().bold(),
+        "Batch compression complete!".bright_green().bold()
+    );
+    println!();
+
+    let successful = results.iter().filter(|r| r.success).count();
+    let failed = results.len() - successful;
+
+    let mut total_original: u64 = 0;
+    let mut total_compressed: u64 = 0;
+
+    for result in results {
+        if let Some(ref res) = result.result {
+            total_original += res.original_size;
+            total_compressed += res.compressed_size;
+        }
+    }
+
+    let total_saved = total_original.saturating_sub(total_compressed);
+    let avg_ratio = if total_original > 0 {
+        (total_saved as f64 / total_original as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    println!("{}", "Summary".bright_white().bold());
+    println!("{}", "─".repeat(30).dimmed());
+    println!(
+        "  {} {}",
+        "Total files:".dimmed(),
+        results.len().to_string().bright_white()
+    );
+    println!(
+        "  {} {}",
+        "Successful:".dimmed(),
+        successful.to_string().bright_green()
+    );
+
+    if failed > 0 {
+        println!(
+            "  {} {}",
+            "Failed:".dimmed(),
+            failed.to_string().bright_red()
+        );
+    }
+
+    println!();
+    println!(
+        "  {} {}",
+        "Total original:".dimmed(),
+        format_size(total_original).bright_white()
+    );
+    println!(
+        "  {} {}",
+        "Total compressed:".dimmed(),
+        format_size(total_compressed).bright_green()
+    );
+    println!(
+        "  {} {} ({:.1}%)",
+        "Total saved:".dimmed(),
+        format_size(total_saved).bright_yellow(),
+        avg_ratio
+    );
+    println!(
+        "  {} {:.2}s",
+        "Total time:".dimmed(),
+        total_elapsed.as_secs_f64()
+    );
+    println!();
+
+    // Show individual results
+    println!("{}", "Individual Results".bright_white().bold());
+    println!("{}", "─".repeat(30).dimmed());
+
+    for (i, file_result) in results.iter().enumerate() {
+        if file_result.success {
+            if let Some(ref res) = file_result.result {
+                let saved = res.original_size.saturating_sub(res.compressed_size);
+                let ratio = if res.original_size > 0 {
+                    (saved as f64 / res.original_size as f64) * 100.0
+                } else {
+                    0.0
+                };
+
+                println!(
+                    "  {} {} → {} ({:.1}% saved)",
+                    format!("[{}]", i + 1).dimmed(),
+                    file_result.input_path.bright_cyan(),
+                    format_size(res.compressed_size).bright_green(),
+                    ratio
+                );
+            }
+        } else {
+            println!(
+                "  {} {} - {}",
+                format!("[{}]", i + 1).dimmed(),
+                file_result.input_path.bright_red(),
+                file_result.error.as_ref().unwrap_or(&"Unknown error".to_string()).bright_red()
+            );
+        }
+    }
+
+    println!();
+    println!("{}", "━".repeat(50).dimmed());
+    println!();
+}
+
+/// Print batch processing summary as JSON
+pub fn print_batch_summary_json(results: &[BatchFileResult], total_elapsed: std::time::Duration) {
+    let successful = results.iter().filter(|r| r.success).count();
+    let failed = results.len() - successful;
+
+    let mut total_original: u64 = 0;
+    let mut total_compressed: u64 = 0;
+
+    for result in results {
+        if let Some(ref res) = result.result {
+            total_original += res.original_size;
+            total_compressed += res.compressed_size;
+        }
+    }
+
+    let total_saved = total_original.saturating_sub(total_compressed);
+    let avg_ratio = if total_original > 0 {
+        (total_saved as f64 / total_original as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    let json_results: Vec<BatchFileResultJson> = results
+        .iter()
+        .map(|r| BatchFileResultJson {
+            input_path: r.input_path.clone(),
+            success: r.success,
+            result: r.result.clone(),
+            error: r.error.clone(),
+            elapsed_seconds: r.elapsed.as_secs_f64(),
+        })
+        .collect();
+
+    let summary = BatchSummary {
+        total_files: results.len(),
+        successful,
+        failed,
+        total_original_size: total_original,
+        total_compressed_size: total_compressed,
+        total_saved,
+        average_compression_ratio: avg_ratio,
+        total_elapsed_seconds: total_elapsed.as_secs_f64(),
+        results: json_results,
+    };
+
+    match serde_json::to_string_pretty(&summary) {
+        Ok(json) => println!("{}", json),
+        Err(e) => eprintln!("Error serializing to JSON: {}", e),
+    }
+}

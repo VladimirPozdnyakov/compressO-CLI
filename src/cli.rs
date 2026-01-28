@@ -16,11 +16,15 @@ use crate::domain::{CompressionConfig, CropCoordinates, FlipOptions, OutputForma
                   compresso video.mp4 --width 1280 --height 720 --fps 30"
 )]
 pub struct Cli {
-    /// Input video file path
-    #[arg(required = true)]
-    pub input: String,
+    /// Input video file path(s) - can specify multiple files
+    #[arg(required_unless_present = "dir")]
+    pub input: Vec<String>,
 
-    /// Output file path (default: <input>_compressed.<ext>)
+    /// Process all videos in a directory
+    #[arg(long, conflicts_with = "input")]
+    pub dir: Option<String>,
+
+    /// Output file path (only for single file, default: <input>_compressed.<ext>)
     #[arg()]
     pub output: Option<String>,
 
@@ -178,7 +182,7 @@ impl Cli {
         };
 
         CompressionConfig {
-            input_path: self.input.clone(),
+            input_path: self.input.first().cloned().unwrap_or_default(),
             output_path: self.output.clone(),
             format: self.format.map(|f| f.into()),
             preset: self.preset.into(),

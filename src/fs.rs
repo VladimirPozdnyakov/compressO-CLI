@@ -130,6 +130,40 @@ pub fn file_exists(path: &str) -> bool {
     Path::new(path).exists()
 }
 
+/// Get all video files from a directory
+pub fn get_video_files_in_directory(dir_path: &str) -> Result<Vec<String>> {
+    let path = Path::new(dir_path);
+
+    if !path.exists() {
+        return Err(CompressoError::FileNotFound(dir_path.to_string()));
+    }
+
+    if !path.is_dir() {
+        return Err(CompressoError::InvalidInput(format!(
+            "{} is not a directory",
+            dir_path
+        )));
+    }
+
+    let mut video_files = Vec::new();
+
+    for entry in fs::read_dir(path)? {
+        let entry = entry?;
+        let entry_path = entry.path();
+
+        if entry_path.is_file() {
+            if let Some(path_str) = entry_path.to_str() {
+                if is_video_file(path_str) {
+                    video_files.push(path_str.to_string());
+                }
+            }
+        }
+    }
+
+    video_files.sort();
+    Ok(video_files)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

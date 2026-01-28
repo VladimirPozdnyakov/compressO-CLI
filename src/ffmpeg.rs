@@ -82,14 +82,36 @@ impl FFmpeg {
         Ok(Self { ffmpeg_path })
     }
 
-    /// Find FFmpeg binary
+    /// Find FFmpeg binary with security considerations
+    ///
+    /// # Security
+    ///
+    /// Search priority (highest to lowest):
+    /// 1. COMPRESSO_FFMPEG_PATH environment variable (user-specified, most secure)
+    /// 2. Bundled FFmpeg in application directory (verified if compiled with checks)
+    /// 3. System PATH (least secure, vulnerable to PATH hijacking)
+    ///
+    /// The resolved path is logged to stderr for security auditing.
+    ///
+    /// # Environment Variables
+    ///
+    /// - `COMPRESSO_FFMPEG_PATH`: Explicit path to FFmpeg binary (recommended for security)
+    /// - `COMPRESSO_FFMPEG_VERIFY`: Set to "1" to enable strict verification (bundled only)
+    ///
     fn find_ffmpeg() -> Result<String> {
-        // First, check if ffmpeg is in PATH
-        if let Ok(path) = which::which("ffmpeg") {
-            return Ok(path.to_string_lossy().to_string());
+        // Priority 1: Explicit user-specified path (most secure)
+        if let Ok(explicit_path) = std::env::var("COMPRESSO_FFMPEG_PATH") {
+            let path = Path::new(&explicit_path);
+            if path.exists() && path.is_file() {
+                eprintln!("ℹ Using FFmpeg from COMPRESSO_FFMPEG_PATH: {}", explicit_path);
+                return Ok(explicit_path);
+            } else {
+                eprintln!("⚠ COMPRESSO_FFMPEG_PATH set but invalid: {}", explicit_path);
+                return Err(CompressoError::FfmpegNotFound);
+            }
         }
 
-        // Check for bundled ffmpeg
+        // Priority 2: Bundled FFmpeg (verified)
         let exe_dir = std::env::current_exe()
             .ok()
             .and_then(|p| p.parent().map(|p| p.to_path_buf()));
@@ -102,11 +124,72 @@ impl FFmpeg {
             };
 
             if bundled.exists() {
-                return Ok(bundled.to_string_lossy().to_string());
+                let bundled_path = bundled.to_string_lossy().to_string();
+
+                // Verify bundled FFmpeg if requested
+                if std::env::var("COMPRESSO_FFMPEG_VERIFY").unwrap_or_default() == "1" {
+                    if let Err(e) = Self::verify_bundled_ffmpeg(&bundled) {
+                        eprintln!("⚠ Bundled FFmpeg verification failed: {}", e);
+                        eprintln!("⚠ Set COMPRESSO_FFMPEG_PATH to use a trusted FFmpeg binary");
+                        return Err(CompressoError::FfmpegNotFound);
+                    }
+                }
+
+                eprintln!("ℹ Using bundled FFmpeg: {}", bundled_path);
+                return Ok(bundled_path);
             }
         }
 
+        // Priority 3: System PATH (least secure - log warning)
+        if let Ok(path) = which::which("ffmpeg") {
+            let path_str = path.to_string_lossy().to_string();
+            eprintln!("⚠ Using FFmpeg from system PATH: {}", path_str);
+            eprintln!("⚠ For better security, set COMPRESSO_FFMPEG_PATH to an explicit path");
+            return Ok(path_str);
+        }
+
         Err(CompressoError::FfmpegNotFound)
+    }
+
+    /// Verify bundled FFmpeg binary integrity
+    ///
+    /// This is a basic verification that checks if the binary is executable
+    /// and responds to --version. For production use, consider adding:
+    /// - SHA256 hash verification against known-good builds
+    /// - Code signature verification on Windows/macOS
+    fn verify_bundled_ffmpeg(path: &Path) -> Result<()> {
+        // Check if file is executable (Unix-like systems)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let metadata = std::fs::metadata(path)?;
+            let permissions = metadata.permissions();
+            if permissions.mode() & 0o111 == 0 {
+                return Err(CompressoError::InvalidInput(
+                    "Bundled FFmpeg is not executable".to_string()
+                ));
+            }
+        }
+
+        // Verify it's actually FFmpeg by checking --version output
+        match std::process::Command::new(path)
+            .arg("--version")
+            .output()
+        {
+            Ok(output) => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                if !stdout.contains("ffmpeg version") {
+                    return Err(CompressoError::InvalidInput(
+                        "Binary does not appear to be FFmpeg".to_string()
+                    ));
+                }
+                Ok(())
+            }
+            Err(e) => Err(CompressoError::InvalidInput(format!(
+                "Failed to verify FFmpeg binary: {}",
+                e
+            ))),
+        }
     }
 
     /// Get video information

@@ -3,7 +3,7 @@ use regex::Regex;
 use shared_child::SharedChild;
 use std::{
     io::{BufRead, BufReader},
-    path::Path,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -14,6 +14,61 @@ use std::{
 use crate::domain::{CompressionConfig, CompressionResult, Preset, VideoInfo, VideoTransforms};
 use crate::error::{CompressoError, Result};
 use crate::progress::ProgressMetrics;
+
+/// RAII guard that ensures temporary file is deleted on drop
+struct TempFileGuard {
+    path: PathBuf,
+    keep: Arc<AtomicBool>,
+    child: Option<Arc<SharedChild>>,
+}
+
+impl TempFileGuard {
+    fn new(path: PathBuf) -> Self {
+        Self {
+            path,
+            keep: Arc::new(AtomicBool::new(false)),
+            child: None,
+        }
+    }
+
+    fn set_child(&mut self, child: Arc<SharedChild>) {
+        self.child = Some(child);
+    }
+
+    fn keep(&self) {
+        self.keep.store(true, Ordering::Relaxed);
+    }
+}
+
+impl Drop for TempFileGuard {
+    fn drop(&mut self) {
+        if !self.keep.load(Ordering::Relaxed) {
+            // First, ensure FFmpeg process is terminated
+            if let Some(ref child) = self.child {
+                let _ = child.kill();
+                // Wait a bit for the process to release the file
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
+
+            // Try to remove the file multiple times (Windows may need time to release handle)
+            for i in 0..5 {
+                match std::fs::remove_file(&self.path) {
+                    Ok(_) => {
+                        eprintln!("✓ Cleaned up temporary file: {}", self.path.display());
+                        break;
+                    }
+                    Err(e) => {
+                        if i < 4 {
+                            std::thread::sleep(std::time::Duration::from_millis(100));
+                        } else {
+                            eprintln!("⚠ Could not delete temporary file {}: {}", self.path.display(), e);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 
 /// FFmpeg wrapper for video compression
 pub struct FFmpeg {
@@ -158,6 +213,27 @@ impl FFmpeg {
             )));
         }
 
+        // Create temporary output path for atomic write
+        // Keep the correct extension so FFmpeg can detect the output format
+        let output_path_obj = Path::new(&output_path);
+        let temp_output_path = if let Some(stem) = output_path_obj.file_stem() {
+            let extension = output_path_obj.extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("mp4");
+            let temp_filename = format!("{}.tmp.{}.{}", stem.to_string_lossy(), nanoid::nanoid!(8), extension);
+
+            if let Some(parent) = output_path_obj.parent() {
+                parent.join(temp_filename).to_string_lossy().to_string()
+            } else {
+                temp_filename
+            }
+        } else {
+            format!("{}.tmp.{}", output_path, nanoid::nanoid!(8))
+        };
+
+        // Create RAII guard to ensure temp file is cleaned up on any exit path
+        let mut temp_guard = TempFileGuard::new(PathBuf::from(&temp_output_path));
+
         // Get original size
         let original_size = std::fs::metadata(input_path)?.len();
 
@@ -168,8 +244,8 @@ impl FFmpeg {
         )));
         let metrics_for_thread = progress_metrics.clone();
 
-        // Build FFmpeg arguments
-        let args = self.build_args(config, &output_path, &output_format);
+        // Build FFmpeg arguments (write to temp file for atomic operation)
+        let args = self.build_args(config, &temp_output_path, &output_format);
 
         if config.verbose {
             eprintln!("FFmpeg command: {} {}", self.ffmpeg_path, args.join(" "));
@@ -187,7 +263,9 @@ impl FFmpeg {
 
         let child = Arc::new(child);
         let child_clone = child.clone();
-        let child_for_cancel = child.clone();
+
+        // Give the guard access to the child process so it can kill it on drop
+        temp_guard.set_child(child.clone());
 
         // Channel for progress updates (progress, current_frame)
         let (tx, rx): (Sender<(f64, u32)>, Receiver<(f64, u32)>) = crossbeam_channel::unbounded();
@@ -277,9 +355,7 @@ impl FFmpeg {
         // Wait for completion or cancellation
         loop {
             if cancelled.load(Ordering::Relaxed) {
-                let _ = child_for_cancel.kill();
-                // Clean up partial output
-                let _ = std::fs::remove_file(&output_path);
+                // temp_guard will automatically kill FFmpeg and clean up the file on return
                 return Err(CompressoError::Cancelled);
             }
 
@@ -288,6 +364,7 @@ impl FFmpeg {
                     if status.success() {
                         break;
                     } else {
+                        // temp_guard will automatically clean up the file on return
                         // Read stderr for error message
                         if let Some(mut stderr) = child.take_stderr() {
                             let mut error_msg = String::new();
@@ -303,10 +380,17 @@ impl FFmpeg {
                     std::thread::sleep(std::time::Duration::from_millis(100));
                 }
                 Err(e) => {
+                    // temp_guard will automatically clean up the file on return
                     return Err(CompressoError::FfmpegError(e.to_string()));
                 }
             }
         }
+
+        // Success! Tell the guard to keep the temp file (we'll rename it)
+        temp_guard.keep();
+
+        // Atomic rename: move temp file to final output path
+        std::fs::rename(&temp_output_path, &output_path)?;
 
         // Get compressed size
         let compressed_size = std::fs::metadata(&output_path)?.len();

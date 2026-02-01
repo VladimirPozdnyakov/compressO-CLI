@@ -66,7 +66,7 @@ fn print_interactive_header() {
     println!("{}", "━".repeat(50).dimmed());
     println!(
         "{}",
-        "  CompressO CLI v1.0.0 - Interactive Mode".bright_cyan().bold()
+        "  CompressO CLI v1.1.0 - Interactive Mode".bright_cyan().bold()
     );
     println!("{}", "━".repeat(50).dimmed());
     println!();

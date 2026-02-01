@@ -11,7 +11,7 @@ pub fn print_header() {
     println!();
     println!(
         "{}",
-        "  CompressO CLI v1.0.0".bright_cyan().bold()
+        "  CompressO CLI v1.1.0".bright_cyan().bold()
     );
     println!("{}", "━".repeat(50).dimmed());
     println!();

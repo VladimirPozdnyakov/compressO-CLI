@@ -455,7 +455,7 @@ compresso --dir ./videos -q 80 -p ironclad
 ### Batch Output
 
 ```
-CompressO CLI v1.0.0
+CompressO CLI v1.1.0
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Processing 3 files...
 

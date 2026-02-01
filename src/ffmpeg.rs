@@ -7,13 +7,34 @@ use std::{
     process::{Command, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
     },
 };
 
 use crate::domain::{CompressionConfig, CompressionResult, Preset, VideoInfo, VideoTransforms};
 use crate::error::{CompressoError, Result};
 use crate::progress::ProgressMetrics;
+
+// Compile regex patterns once using OnceLock for better performance
+// These are used for parsing FFmpeg output
+
+/// Regex for parsing video duration (HH:MM:SS.MS)
+static DURATION_REGEX: OnceLock<Regex> = OnceLock::new();
+
+/// Regex for parsing video dimensions (WIDTHxHEIGHT)
+static DIMENSIONS_REGEX: OnceLock<Regex> = OnceLock::new();
+
+/// Regex for parsing video FPS
+static FPS_REGEX: OnceLock<Regex> = OnceLock::new();
+
+/// Regex for parsing FFmpeg progress (out_time_ms)
+static PROGRESS_TIME_MS_REGEX: OnceLock<Regex> = OnceLock::new();
+
+/// Regex for parsing FFmpeg progress (out_time)
+static PROGRESS_TIME_REGEX: OnceLock<Regex> = OnceLock::new();
+
+/// Regex for parsing FFmpeg frame number
+static PROGRESS_FRAME_REGEX: OnceLock<Regex> = OnceLock::new();
 
 /// RAII guard that ensures temporary file is deleted on drop
 struct TempFileGuard {
@@ -393,13 +414,19 @@ impl FFmpeg {
     }
 
     fn parse_duration(output: &str) -> Option<String> {
-        let re = Regex::new(r"Duration: (?P<duration>\d{2}:\d{2}:\d{2}\.\d{2})").ok()?;
+        let re = DURATION_REGEX.get_or_init(|| {
+            Regex::new(r"Duration: (?P<duration>\d{2}:\d{2}:\d{2}\.\d{2})")
+                .expect("Invalid duration regex pattern")
+        });
         re.captures(output)
             .map(|cap| cap["duration"].to_string())
     }
 
     fn parse_dimensions(output: &str) -> Option<(u32, u32)> {
-        let re = Regex::new(r"Video:.*? (\d{2,5})x(\d{2,5})").ok()?;
+        let re = DIMENSIONS_REGEX.get_or_init(|| {
+            Regex::new(r"Video:.*? (\d{2,5})x(\d{2,5})")
+                .expect("Invalid dimensions regex pattern")
+        });
         re.captures(output).and_then(|cap| {
             let width = cap.get(1)?.as_str().parse().ok()?;
             let height = cap.get(2)?.as_str().parse().ok()?;
@@ -408,7 +435,10 @@ impl FFmpeg {
     }
 
     fn parse_fps(output: &str) -> Option<f32> {
-        let re = Regex::new(r"(\d+(?:\.\d+)?)\s*fps").ok()?;
+        let re = FPS_REGEX.get_or_init(|| {
+            Regex::new(r"(\d+(?:\.\d+)?)\s*fps")
+                .expect("Invalid FPS regex pattern")
+        });
         re.captures(output)
             .and_then(|cap| cap.get(1)?.as_str().parse().ok())
     }
@@ -565,9 +595,20 @@ impl FFmpeg {
         std::thread::spawn(move || {
             if let Some(stdout) = child_clone.take_stdout() {
                 let reader = BufReader::new(stdout);
-                let re = Regex::new(r"out_time_ms=(\d+)").unwrap();
-                let re_time = Regex::new(r"out_time=(\d{2}:\d{2}:\d{2}\.\d+)").unwrap();
-                let re_frame = Regex::new(r"frame=\s*(\d+)").unwrap();
+
+                // Use pre-compiled regex patterns for better performance
+                let re = PROGRESS_TIME_MS_REGEX.get_or_init(|| {
+                    Regex::new(r"out_time_ms=(\d+)")
+                        .expect("Invalid progress time_ms regex pattern")
+                });
+                let re_time = PROGRESS_TIME_REGEX.get_or_init(|| {
+                    Regex::new(r"out_time=(\d{2}:\d{2}:\d{2}\.\d+)")
+                        .expect("Invalid progress time regex pattern")
+                });
+                let re_frame = PROGRESS_FRAME_REGEX.get_or_init(|| {
+                    Regex::new(r"frame=\s*(\d+)")
+                        .expect("Invalid progress frame regex pattern")
+                });
 
                 let mut current_frame: u32 = 0;
 

@@ -1,16 +1,26 @@
 # CompressO CLI
 
-Fast, secure, and efficient video compression tool powered by FFmpeg.
+Fast, secure, and efficient video compression tool powered by FFmpeg with multilingual support.
 
 > Fork of [CompressO](https://github.com/codeforreal1/compressO) - converted from GUI to CLI with extensive security and performance improvements.
 
 [![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org/)
 
+## 🌍 Languages
+
+CompressO CLI supports multiple languages:
+
+- 🇬🇧 **English** (default)
+- 🇷🇺 **Русский** (Russian)
+
+The application automatically detects the language based on command-line arguments or prompts the user to select a language on first launch.
+
 ## ✨ Features
 
 ### Core Functionality
 - 🎯 **Interactive Mode** - Drag & drop videos or run without arguments for guided wizard
+- 🌐 **Multilingual Support** - Choose between English and Russian languages
 - ⚡ **Batch Processing** - Compress multiple videos or entire directories at once
 - 🎚️ **Smart Presets** - Choose between Thunderbolt (5x speed) or Ironclad (quality)
 - 📊 **Real-time Progress** - Live encoding speed (fps), ETA, and progress bar
@@ -85,10 +95,14 @@ See [Building from Source](#building-from-source) section below.
 ### Simplest Usage
 
 ```bash
-# Interactive mode - just run it
+# Interactive mode - just run it (prompts for language selection)
 compresso
 
 # Or drag & drop a video file onto compresso.exe
+
+# Use specific language
+compresso --language russian
+compresso --language english
 ```
 
 ### Command Line
@@ -112,12 +126,13 @@ compresso video.mp4 output.webm -f webm
 ### 1. Interactive Mode (Recommended for Beginners)
 
 **Launch methods:**
-- Double-click `compresso.exe` (Windows)
-- Run `compresso` without arguments
+- Double-click `compresso.exe` (Windows) - prompts for language selection
+- Run `compresso` without arguments - prompts for language selection
 - Drag & drop video file onto executable
 - Drag & drop multiple files for batch processing
 
 **Features:**
+- Language selection on first launch (English/Russian)
 - Guided step-by-step wizard
 - File validation with helpful error messages
 - Preview of compression settings
@@ -268,6 +283,12 @@ compresso video.mp4 -p thunderbolt -q 70
 
 # Output to specific file
 compresso video.mp4 output.mp4
+
+# Use Russian language
+compresso video.mp4 --language russian
+
+# Use English language
+compresso video.mp4 --language english
 ```
 
 ### Format Conversion
@@ -414,6 +435,7 @@ compresso *.mp4 -q 70 -v
 
 | Option | Short | Description |
 |--------|-------|-------------|
+| `--language <LANG>` | | Language for the interface: `english` or `russian` |
 | `--overwrite` | `-y` | Overwrite output file without confirmation |
 | `--verbose` | `-v` | Show detailed FFmpeg output |
 | `--json` | | Output results as JSON |

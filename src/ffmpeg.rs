@@ -798,6 +798,10 @@ impl FFmpeg {
                 args.extend([
                     "-c:v".to_string(),
                     "libx264".to_string(),
+                    "-preset".to_string(),
+                    "ultrafast".to_string(),
+                    "-tune".to_string(),
+                    "fastdecode".to_string(),
                     "-crf".to_string(),
                     crf_str,
                 ]);

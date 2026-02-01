@@ -413,11 +413,12 @@ pub fn estimate_output_size_range(original_size: u64, quality: u8, preset: Prese
     // Examples: Q70=3.5%, Q50=4.5%, Q90=2.5%
     let base_ratio = 0.02 + quality_inv * 0.05;
 
-    // Preset has minimal impact on file size (mostly affects encoding speed)
-    // Based on real data: Ironclad vs Thunderbolt differ by ~1-2%
+    // Preset affects file size due to encoding efficiency
+    // ultrafast (Thunderbolt) trades encoding time for larger files (10-20% at same CRF)
+    // slow (Ironclad) produces smaller files with better quality retention
     let preset_factor = match preset {
-        Preset::Ironclad => 1.1,    // Slightly larger for better quality retention
-        Preset::Thunderbolt => 0.95, // Slightly smaller, more aggressive
+        Preset::Ironclad => 1.0,     // Baseline (slow preset, efficient compression)
+        Preset::Thunderbolt => 1.15, // ultrafast preset, less efficient but much faster
     };
 
     // Calculate base estimate

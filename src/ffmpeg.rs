@@ -309,6 +309,55 @@ impl FFmpeg {
         Ok(())
     }
 
+    /// Sanitize FFmpeg arguments for safe logging
+    ///
+    /// # Security
+    ///
+    /// This function prevents information disclosure (CWE-532) by:
+    /// - Replacing full file paths with just filenames
+    /// - Redacting user's home directory path
+    /// - Preserving FFmpeg flags and options for debugging
+    ///
+    /// This protects against:
+    /// - File system structure disclosure
+    /// - Username exposure in paths
+    /// - Sensitive directory names in logs
+    ///
+    fn sanitize_args_for_logging(args: &[String]) -> Vec<String> {
+        let home_dir = std::env::var("HOME")
+            .or_else(|_| std::env::var("USERPROFILE"))
+            .unwrap_or_default();
+
+        args.iter()
+            .map(|arg| {
+                // Check if this looks like a file path (contains path separators or has extension)
+                if arg.contains('/') || arg.contains('\\') || arg.contains('.') && !arg.starts_with('-') {
+                    // Extract just the filename
+                    if let Some(filename) = Path::new(arg).file_name() {
+                        let filename_str = filename.to_string_lossy().to_string();
+
+                        // If it's in home directory, indicate that
+                        if !home_dir.is_empty() && arg.contains(&home_dir) {
+                            format!("~/{}", filename_str)
+                        } else {
+                            filename_str
+                        }
+                    } else {
+                        // Redact home directory path if present
+                        if !home_dir.is_empty() && arg.contains(&home_dir) {
+                            arg.replace(&home_dir, "~")
+                        } else {
+                            arg.clone()
+                        }
+                    }
+                } else {
+                    // Not a path, keep as-is (FFmpeg flags, options, etc.)
+                    arg.clone()
+                }
+            })
+            .collect()
+    }
+
     /// Get video information
     ///
     /// Note: This function does not pre-check file existence to avoid TOCTOU race conditions.
@@ -487,7 +536,9 @@ impl FFmpeg {
         let args = self.build_args(config, &validated_input, &temp_output_path, &output_format);
 
         if config.verbose {
-            eprintln!("FFmpeg command: {} {}", self.ffmpeg_path, args.join(" "));
+            // Sanitize arguments to avoid leaking full paths in logs
+            let sanitized_args = Self::sanitize_args_for_logging(&args);
+            eprintln!("ℹ FFmpeg command (paths sanitized): ffmpeg {}", sanitized_args.join(" "));
         }
 
         // Spawn FFmpeg process

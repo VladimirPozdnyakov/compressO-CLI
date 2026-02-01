@@ -71,7 +71,7 @@ fn english_translations() -> HashMap<String, String> {
 
     // General terms
     translations.insert("app_name".to_string(), "CompressO CLI".to_string());
-    translations.insert("app_version".to_string(), "v1.1.0".to_string());
+    translations.insert("app_version".to_string(), "v1.1.1".to_string());
     translations.insert("header_separator".to_string(), "━".repeat(50).to_string());
     translations.insert("compression_complete".to_string(), "Compression complete!".to_string());
     translations.insert("batch_compression_complete".to_string(), "Batch compression complete!".to_string());
@@ -202,7 +202,7 @@ fn russian_translations() -> HashMap<String, String> {
 
     // General terms
     translations.insert("app_name".to_string(), "CompressO CLI".to_string());
-    translations.insert("app_version".to_string(), "v1.1.0".to_string());
+    translations.insert("app_version".to_string(), "v1.1.1".to_string());
     translations.insert("header_separator".to_string(), "━".repeat(50).to_string());
     translations.insert("compression_complete".to_string(), "Сжатие завершено!".to_string());
     translations.insert("batch_compression_complete".to_string(), "Пакетное сжатие завершено!".to_string());

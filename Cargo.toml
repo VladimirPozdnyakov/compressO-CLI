@@ -1,6 +1,6 @@
 [package]
 name = "compresso"
-version = "1.1.0"
+version = "1.1.1"
 description = "Fast video compression CLI tool powered by FFmpeg"
 authors = ["CompressO Team"]
 license = "AGPL-3.0-only"

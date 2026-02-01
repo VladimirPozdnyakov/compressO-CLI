@@ -683,15 +683,28 @@ impl FFmpeg {
             }
         });
 
-        // Wait for completion or cancellation
+        // Spawn thread to wait for process completion (blocking, no busy-wait)
+        let child_for_wait = child.clone();
+        let (completion_tx, completion_rx) = crossbeam_channel::bounded(1);
+
+        std::thread::spawn(move || {
+            // Block until process completes (no CPU waste)
+            let result = child_for_wait.wait();
+            let _ = completion_tx.send(result);
+        });
+
+        // Wait for completion or cancellation using select (efficient, no polling)
         loop {
+            // Check for cancellation
             if cancelled.load(Ordering::Relaxed) {
                 // temp_guard will automatically kill FFmpeg and clean up the file on return
                 return Err(CompressoError::Cancelled);
             }
 
-            match child.try_wait() {
-                Ok(Some(status)) => {
+            // Wait for completion with timeout (allows periodic cancellation checks)
+            match completion_rx.recv_timeout(std::time::Duration::from_millis(100)) {
+                Ok(Ok(status)) => {
+                    // Process completed
                     if status.success() {
                         break;
                     } else {
@@ -707,12 +720,20 @@ impl FFmpeg {
                         return Err(CompressoError::CorruptedVideo);
                     }
                 }
-                Ok(None) => {
-                    std::thread::sleep(std::time::Duration::from_millis(100));
-                }
-                Err(e) => {
+                Ok(Err(e)) => {
+                    // Process wait failed
                     // temp_guard will automatically clean up the file on return
                     return Err(CompressoError::FfmpegError(e.to_string()));
+                }
+                Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                    // Timeout - continue loop to check cancellation
+                    continue;
+                }
+                Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                    // Channel disconnected unexpectedly
+                    return Err(CompressoError::FfmpegError(
+                        "Process completion channel disconnected".to_string()
+                    ));
                 }
             }
         }

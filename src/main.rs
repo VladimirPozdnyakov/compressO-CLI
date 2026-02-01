@@ -252,7 +252,7 @@ fn run(config: CompressionConfig, cancelled: Arc<AtomicBool>) -> error::Result<C
     // Start compression
     let start_time = std::time::Instant::now();
 
-    let result = ffmpeg.compress_video(&config, cancelled.clone(), move |progress, current_frame, total_frames, fps, eta| {
+    let result = ffmpeg.compress_video(&config, Some(&video_info), cancelled.clone(), move |progress, current_frame, total_frames, fps, eta| {
         if !json_mode {
             update_progress(&progress_bar_clone, progress, current_frame, total_frames, fps, eta);
         }

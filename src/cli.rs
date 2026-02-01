@@ -12,7 +12,7 @@ use crate::domain::{CompressionConfig, CropCoordinates, FlipOptions, OutputForma
                   Examples:\n  \
                   compresso video.mp4\n  \
                   compresso video.mp4 -q 80 -p ironclad\n  \
-                  compresso video.mp4 output.webm -f webm\n  \
+                  compresso video.mp4 -o output.webm -f webm\n  \
                   compresso video.mp4 --width 1280 --height 720 --fps 30"
 )]
 pub struct Cli {
@@ -25,7 +25,7 @@ pub struct Cli {
     pub dir: Option<String>,
 
     /// Output file path (only for single file, default: <input>_compressed.<ext>)
-    #[arg()]
+    #[arg(short, long)]
     pub output: Option<String>,
 
     /// Compression quality (0-100, higher = better quality, larger file)
@@ -87,6 +87,10 @@ pub struct Cli {
     /// Output results as JSON
     #[arg(long)]
     pub json: bool,
+
+    /// Language for the application interface
+    #[arg(long, value_enum, default_value = "english")]
+    pub language: LanguageArg,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -123,6 +127,23 @@ impl From<FormatArg> for OutputFormat {
             FormatArg::Webm => OutputFormat::Webm,
             FormatArg::Avi => OutputFormat::Avi,
             FormatArg::Mkv => OutputFormat::Mkv,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum LanguageArg {
+    /// English language
+    English,
+    /// Russian language
+    Russian,
+}
+
+impl From<LanguageArg> for crate::localization::Language {
+    fn from(arg: LanguageArg) -> Self {
+        match arg {
+            LanguageArg::English => crate::localization::Language::English,
+            LanguageArg::Russian => crate::localization::Language::Russian,
         }
     }
 }

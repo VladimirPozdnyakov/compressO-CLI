@@ -4,6 +4,7 @@ mod error;
 mod ffmpeg;
 mod fs;
 mod interactive;
+mod localization;
 mod output;
 mod progress;
 
@@ -20,6 +21,8 @@ use cli::Cli;
 use domain::{CompressionConfig, CompressionResult};
 use error::CompressoError;
 use ffmpeg::FFmpeg;
+use localization::{set_language, t};
+use cli::LanguageArg;
 use output::*;
 
 fn main() {
@@ -35,11 +38,85 @@ fn main() {
     // Check if all args (except program name) are file paths (not flags)
     let all_files = args.len() > 1 && args[1..].iter().all(|arg| !arg.starts_with('-') && !arg.starts_with('/'));
 
+    // Determine if we should run in interactive mode
+    // Interactive if: no args, single non-flag arg, or multiple file args (not flags)
+    // Also interactive if only language flag is provided without input files
+    let has_language_flag = args.windows(2).any(|w| w[0] == "--language") ||
+                           args.iter().any(|arg| arg.starts_with("--language="));
+
+    // Check if there are any non-flag arguments that are not language values (potential input files)
+    let has_non_flag_args = {
+        let mut skip_next = false;
+        let mut found_input = false;
+
+        for i in 1..args.len() {
+            if skip_next {
+                skip_next = false;
+                continue;
+            }
+
+            if args[i] == "--language" && i + 1 < args.len() {
+                // Skip the next argument as it's the language value
+                skip_next = true;
+                continue;
+            }
+
+            if args[i].starts_with("--language=") {
+                // This argument contains both flag and value
+                continue;
+            }
+
+            if !args[i].starts_with('-') && !args[i].starts_with('/') {
+                // Found a potential input file
+                found_input = true;
+                break;
+            }
+        }
+
+        found_input
+    };
+
     let is_interactive = args.len() == 1
         || (args.len() == 2 && !args[1].starts_with('-') && !args[1].starts_with('/'))
-        || (args.len() > 2 && all_files);
+        || (args.len() > 2 && all_files)
+        // Special case: if --language flag is provided without input files
+        || (has_language_flag && !has_non_flag_args);
 
+    // Determine language first by checking for --language flag in args
+    // For interactive mode (no args), we need to handle parsing specially
     let config = if is_interactive {
+        // Extract language from args if present
+        let has_language_flag = args.windows(2).any(|w| w[0] == "--language") ||
+                               args.iter().any(|arg| arg.starts_with("--language="));
+
+        // Only set language from args if --language flag is provided
+        if has_language_flag {
+            let mut language_arg = LanguageArg::English; // default
+            let mut i = 1;
+            while i < args.len() {
+                if args[i] == "--language" && i + 1 < args.len() {
+                    if args[i + 1].to_lowercase() == "russian" {
+                        language_arg = LanguageArg::Russian;
+                    } else if args[i + 1].to_lowercase() == "english" {
+                        language_arg = LanguageArg::English;
+                    }
+                    break;
+                } else if args[i].starts_with("--language=") {
+                    if args[i].contains("russian") {
+                        language_arg = LanguageArg::Russian;
+                    } else {
+                        language_arg = LanguageArg::English;
+                    }
+                    break;
+                }
+                i += 1;
+            }
+
+            set_language(language_arg.into());
+        }
+        // If no language flag provided and this is initial launch (no args),
+        // language will be set in interactive mode
+
         // Interactive mode
         if args.len() > 2 && all_files {
             // Multiple files drag & dropped -> batch interactive mode
@@ -54,7 +131,7 @@ fn main() {
             None
         };
 
-        match interactive::run_interactive(provided_path) {
+        match interactive::run_interactive(provided_path, args.len() == 1 && !has_language_flag) {
             Ok(Some(cfg)) => cfg,
             Ok(None) => {
                 // User cancelled or empty input
@@ -69,6 +146,9 @@ fn main() {
     } else {
         // CLI mode - parse arguments
         let cli = Cli::parse();
+
+        // Set language based on CLI argument
+        set_language(cli.language.into());
 
         // Handle --info flag in CLI mode
         if cli.info {
@@ -390,200 +470,201 @@ fn run_batch_mode(cli: &Cli, input_files: Vec<String>) {
 /// Run interactive batch mode when multiple files are drag & dropped
 fn run_interactive_batch(files: Vec<String>) {
     use dialoguer::{theme::ColorfulTheme, Input, Select};
-    
+
     print_header();
-    
-    println!("{}", "Batch Compression Mode".bright_cyan().bold());
+
+    println!("{}", t("batch_compression_mode").bright_cyan().bold());
     println!("{}", "─".repeat(30).dimmed());
     println!();
-    
+
     // Validate and filter video files
     let mut valid_files = Vec::new();
     let mut invalid_files = Vec::new();
-    
+
     for file_path in files {
         // Clean up path (remove quotes)
         let cleaned = file_path.trim().trim_matches('"').trim_matches('\'').to_string();
-        
+
         if !fs::file_exists(&cleaned) {
-            invalid_files.push((cleaned, "File not found".to_string()));
+            invalid_files.push((cleaned, t("file_not_found")));
             continue;
         }
-        
+
         if !fs::is_video_file(&cleaned) {
-            invalid_files.push((cleaned, "Not a video file".to_string()));
+            invalid_files.push((cleaned, t("not_a_valid_video_file")));
             continue;
         }
-        
+
         valid_files.push(cleaned);
     }
-    
+
     // Show files to be processed
-    println!("{} video files found:", valid_files.len().to_string().bright_green());
+    println!("{} {}:", valid_files.len().to_string().bright_green(), t("video_files_found"));
     for (i, file) in valid_files.iter().enumerate() {
         println!("  {} {}", format!("[{}]", i + 1).dimmed(), file.bright_white());
     }
-    
+
     if !invalid_files.is_empty() {
         println!();
-        println!("{} files will be skipped:", invalid_files.len().to_string().bright_yellow());
+        println!("{} {}:", invalid_files.len().to_string().bright_yellow(), t("files_will_be_skipped"));
         for (file, reason) in &invalid_files {
             println!("  {} {} - {}", "⚠".bright_yellow(), file.dimmed(), reason.bright_yellow());
         }
     }
-    
+
     if valid_files.is_empty() {
         println!();
-        println!("{}", "No valid video files to process!".bright_red());
+        println!("{}", t("no_valid_video_files").bright_red());
         interactive::wait_for_exit();
         return;
     }
-    
+
     println!();
-    
+
     let theme = ColorfulTheme::default();
-    
+
     // Compression settings
-    println!("{}", "Compression Settings".bright_white().bold());
+    println!("{}", t("compression_settings").bright_white().bold());
     println!("{}", "─".repeat(30).dimmed());
     println!();
-    
+
     // Preset
     let presets = vec![
-        "Ironclad (slow, best quality) [default]",
-        "Thunderbolt (fast, good quality)",
+        t("ironclad_slow_best_quality"),
+        t("thunderbolt_fast_good_quality"),
     ];
-    
+
     let preset_idx = Select::with_theme(&theme)
-        .with_prompt("Select preset")
+        .with_prompt(t("select_preset"))
         .items(&presets)
         .default(0)
         .interact()
         .unwrap_or(0);
-    
+
     let preset = match preset_idx {
         1 => domain::Preset::Thunderbolt,
         _ => domain::Preset::Ironclad,
     };
-    
+
     // Quality
     let quality: u8 = Input::with_theme(&theme)
-        .with_prompt("Quality (0-100, higher = better)")
+        .with_prompt(t("quality_prompt"))
         .default(70)
         .interact()
         .unwrap_or(70)
         .clamp(0, 100);
-    
+
     // Advanced settings
-    let advanced_options = vec!["No", "Yes"];
+    let advanced_options = vec![t("no"), t("yes")];
     let show_advanced = Select::with_theme(&theme)
-        .with_prompt("Configure advanced settings?")
+        .with_prompt(t("configure_advanced_settings"))
         .items(&advanced_options)
         .default(0)
         .interact()
         .unwrap_or(0) == 1;
-    
+
     let mut width: Option<u32> = None;
     let mut height: Option<u32> = None;
     let mut fps: Option<u32> = None;
     let mut mute = false;
-    
+
     if show_advanced {
         println!();
-        println!("{}", "Advanced Settings".bright_white().bold());
+        println!("{}", t("advanced_settings").bright_white().bold());
         println!("{}", "─".repeat(30).dimmed());
-        println!("{}", "(Leave empty to keep original)".dimmed());
+        println!("{}", t("leave_empty_keep_original").dimmed());
         println!();
-        
+
         // Resolution
         let width_input: String = Input::with_theme(&theme)
-            .with_prompt("Width (e.g., 1920)")
+            .with_prompt(t("width_prompt"))
             .allow_empty(true)
             .interact_text()
             .unwrap_or_default();
-        
+
         if !width_input.is_empty() {
             width = width_input.parse().ok();
         }
-        
+
         let height_input: String = Input::with_theme(&theme)
-            .with_prompt("Height (e.g., 1080)")
+            .with_prompt(t("height_prompt"))
             .allow_empty(true)
             .interact_text()
             .unwrap_or_default();
-        
+
         if !height_input.is_empty() {
             height = height_input.parse().ok();
         }
-        
+
         // FPS
         let fps_input: String = Input::with_theme(&theme)
-            .with_prompt("FPS (e.g., 30)")
+            .with_prompt(t("fps_prompt"))
             .allow_empty(true)
             .interact_text()
             .unwrap_or_default();
-        
+
         if !fps_input.is_empty() {
             fps = fps_input.parse().ok();
         }
-        
+
         // Mute
-        let mute_options = vec!["No", "Yes"];
+        let mute_options = vec![t("no"), t("yes")];
         let mute_idx = Select::with_theme(&theme)
-            .with_prompt("Remove audio?")
+            .with_prompt(t("remove_audio"))
             .items(&mute_options)
             .default(0)
             .interact()
             .unwrap_or(0);
         mute = mute_idx == 1;
     }
-    
+
     // Confirm and start
     println!();
-    println!("{}", "━".repeat(50).dimmed());
-    
-    let proceed_options = vec!["No", "Yes"];
+    println!("{}", t("header_separator").dimmed());
+
+    let proceed_options = vec![t("no"), t("yes")];
     let proceed = Select::with_theme(&theme)
-        .with_prompt("Start batch compression?")
+        .with_prompt(t("start_compression"))
         .items(&proceed_options)
         .default(1)
         .interact()
         .unwrap_or(1) == 1;
-    
+
     if !proceed {
-        println!("{}", "Compression cancelled.".bright_yellow());
+        println!("{}", t("compression_cancelled").bright_yellow());
         interactive::wait_for_exit();
         return;
     }
-    
+
     println!();
-    println!("{}", format!("Processing {} files...", valid_files.len()).bright_cyan().bold());
+    println!("{}", format!("{} {}...", t("processing"), valid_files.len()).bright_cyan().bold());
     println!();
-    
+
     // Process files
     let batch_start = std::time::Instant::now();
     let mut results = Vec::new();
-    
+
     // Setup Ctrl+C handler
     let cancelled = Arc::new(AtomicBool::new(false));
     let cancelled_clone = cancelled.clone();
-    
+
     ctrlc::set_handler(move || {
         cancelled_clone.store(true, Ordering::Relaxed);
     })
     .expect("Error setting Ctrl+C handler");
-    
+
     for (i, input_path) in valid_files.iter().enumerate() {
         println!(
-            "{} Processing file {}/{}: {}",
+            "{} {} {}/{}: {}",
             "→".bright_blue(),
+            t("processing"),
             i + 1,
             valid_files.len(),
             input_path.bright_white()
         );
-        
+
         let file_start = std::time::Instant::now();
-        
+
         // Create config for this file
         let config = CompressionConfig {
             input_path: input_path.clone(),
@@ -600,7 +681,7 @@ fn run_interactive_batch(files: Vec<String>) {
             verbose: false,
             json: false,
         };
-        
+
         // Process the file
         let result = match run(config, cancelled.clone()) {
             Ok(compression_result) => {
@@ -625,23 +706,23 @@ fn run_interactive_batch(files: Vec<String>) {
                 }
             }
         };
-        
+
         results.push(result);
-        
+
         // Check if cancelled
         if cancelled.load(Ordering::Relaxed) {
             print_cancelled();
             break;
         }
-        
+
         println!();
     }
-    
+
     let batch_elapsed = batch_start.elapsed();
-    
+
     // Print summary
     print_batch_summary(&results, batch_elapsed);
-    
+
     // Wait for exit
     interactive::wait_for_exit();
 }

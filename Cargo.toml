@@ -37,6 +37,7 @@ thiserror = "1"
 which = "6"
 directories = "5"
 ctrlc = "3"
+once_cell = "1.19"
 
 # Process management
 shared_child = "1"

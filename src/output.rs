@@ -5,38 +5,39 @@ use std::sync::{Arc, Mutex};
 
 use crate::domain::{CompressionConfig, CompressionResult, Preset, VideoInfo};
 use crate::fs::format_size;
+use crate::localization::t;
 
 /// Print application header
 pub fn print_header() {
     println!();
     println!(
         "{}",
-        "  CompressO CLI v1.1.0".bright_cyan().bold()
+        format!("  {} {}", t("app_name"), t("app_version")).bright_cyan().bold()
     );
-    println!("{}", "━".repeat(50).dimmed());
+    println!("{}", t("header_separator").dimmed());
     println!();
 }
 
 /// Print video information
 pub fn print_video_info(path: &str, info: &VideoInfo, size: u64) {
-    println!("{}", "Video Information".bright_white().bold());
+    println!("{}", t("video_information").bright_white().bold());
     println!("{}", "─".repeat(30).dimmed());
 
     println!(
         "  {} {}",
-        "File:".dimmed(),
+        t("file").dimmed(),
         path.bright_white()
     );
     println!(
         "  {} {}",
-        "Size:".dimmed(),
+        t("size").dimmed(),
         format_size(size).bright_yellow()
     );
 
     if let Some(duration) = &info.duration {
         println!(
             "  {} {}",
-            "Duration:".dimmed(),
+            t("duration").dimmed(),
             duration.bright_white()
         );
     }
@@ -44,7 +45,7 @@ pub fn print_video_info(path: &str, info: &VideoInfo, size: u64) {
     if let Some((w, h)) = info.dimensions {
         println!(
             "  {} {}x{}",
-            "Resolution:".dimmed(),
+            t("resolution").dimmed(),
             w.to_string().bright_white(),
             h.to_string().bright_white()
         );
@@ -53,7 +54,7 @@ pub fn print_video_info(path: &str, info: &VideoInfo, size: u64) {
     if let Some(fps) = info.fps {
         println!(
             "  {} {} fps",
-            "Frame rate:".dimmed(),
+            t("frame_rate").dimmed(),
             format!("{:.2}", fps).bright_white()
         );
     }
@@ -63,37 +64,37 @@ pub fn print_video_info(path: &str, info: &VideoInfo, size: u64) {
 
 /// Print compression configuration
 pub fn print_config(config: &CompressionConfig, output_path: &str) {
-    println!("{}", "Compression Settings".bright_white().bold());
+    println!("{}", t("compression_settings").bright_white().bold());
     println!("{}", "─".repeat(30).dimmed());
 
     println!(
         "  {} {}",
-        "Input:".dimmed(),
+        t("input").dimmed(),
         config.input_path.bright_white()
     );
     println!(
         "  {} {}",
-        "Output:".dimmed(),
+        t("output").dimmed(),
         output_path.bright_white()
     );
     println!(
         "  {} {}",
-        "Preset:".dimmed(),
+        t("preset").dimmed(),
         match config.preset {
-            Preset::Thunderbolt => "thunderbolt (fast)".bright_green(),
-            Preset::Ironclad => "ironclad (quality)".bright_blue(),
+            Preset::Thunderbolt => t("thunderbolt_preset").bright_green(),
+            Preset::Ironclad => t("ironclad_preset").bright_blue(),
         }
     );
     println!(
         "  {} {}%",
-        "Quality:".dimmed(),
+        t("quality").dimmed(),
         config.quality.to_string().bright_yellow()
     );
 
     if let (Some(w), Some(h)) = (config.width, config.height) {
         println!(
             "  {} {}x{}",
-            "Dimensions:".dimmed(),
+            t("dimensions").dimmed(),
             w.to_string().bright_white(),
             h.to_string().bright_white()
         );
@@ -102,7 +103,7 @@ pub fn print_config(config: &CompressionConfig, output_path: &str) {
     if let Some(fps) = config.fps {
         println!(
             "  {} {} fps",
-            "FPS:".dimmed(),
+            t("fps").dimmed(),
             fps.to_string().bright_white()
         );
     }
@@ -110,8 +111,8 @@ pub fn print_config(config: &CompressionConfig, output_path: &str) {
     if config.mute {
         println!(
             "  {} {}",
-            "Audio:".dimmed(),
-            "muted".bright_red()
+            t("audio").dimmed(),
+            t("muted").bright_red()
         );
     }
 
@@ -189,11 +190,11 @@ fn create_size_bar(size: u64, max_size: u64, bar_width: usize) -> String {
 /// Print compression result
 pub fn print_result(result: &CompressionResult, elapsed: std::time::Duration) {
     println!();
-    println!("{}", "━".repeat(50).dimmed());
+    println!("{}", t("header_separator").dimmed());
     println!(
         "{} {}",
         "✓".bright_green().bold(),
-        "Compression complete!".bright_green().bold()
+        t("compression_complete").bright_green().bold()
     );
     println!();
 
@@ -212,32 +213,32 @@ pub fn print_result(result: &CompressionResult, elapsed: std::time::Duration) {
 
     println!(
         "  {} {} {}",
-        "Original:".dimmed(),
+        t("original").dimmed(),
         original_bar,
         format_size(result.original_size).bright_white()
     );
     println!(
         "  {} {} {}",
-        "Compressed:".dimmed(),
+        t("compressed").dimmed(),
         compressed_bar,
         format_size(result.compressed_size).bright_green()
     );
     println!();
     println!(
         "  {} {} ({:.1}%)",
-        "Saved:".dimmed(),
+        t("saved").dimmed(),
         format_size(saved).bright_yellow(),
         ratio
     );
     println!(
         "  {} {:.2}s",
-        "Time:".dimmed(),
+        t("time").dimmed(),
         elapsed.as_secs_f64()
     );
     println!();
     println!(
         "  {} {}",
-        "Output:".dimmed(),
+        t("output").dimmed(),
         result.file_path.bright_cyan()
     );
     println!();
@@ -391,7 +392,7 @@ pub fn print_cancelled() {
     println!(
         "{} {}",
         "⚠".bright_yellow().bold(),
-        "Compression cancelled by user.".bright_yellow()
+        t("cancelled_by_user").bright_yellow()
     );
     println!();
 }
@@ -544,11 +545,11 @@ pub struct BatchFileResultJson {
 /// Print batch processing summary
 pub fn print_batch_summary(results: &[BatchFileResult], total_elapsed: std::time::Duration) {
     println!();
-    println!("{}", "━".repeat(50).dimmed());
+    println!("{}", t("header_separator").dimmed());
     println!(
         "{} {}",
         "✓".bright_green().bold(),
-        "Batch compression complete!".bright_green().bold()
+        t("batch_compression_complete").bright_green().bold()
     );
     println!();
 
@@ -572,23 +573,23 @@ pub fn print_batch_summary(results: &[BatchFileResult], total_elapsed: std::time
         0.0
     };
 
-    println!("{}", "Summary".bright_white().bold());
+    println!("{}", t("summary").bright_white().bold());
     println!("{}", "─".repeat(30).dimmed());
     println!(
         "  {} {}",
-        "Total files:".dimmed(),
+        t("total_files").dimmed(),
         results.len().to_string().bright_white()
     );
     println!(
         "  {} {}",
-        "Successful:".dimmed(),
+        t("successful").dimmed(),
         successful.to_string().bright_green()
     );
 
     if failed > 0 {
         println!(
             "  {} {}",
-            "Failed:".dimmed(),
+            t("failed").dimmed(),
             failed.to_string().bright_red()
         );
     }
@@ -596,29 +597,29 @@ pub fn print_batch_summary(results: &[BatchFileResult], total_elapsed: std::time
     println!();
     println!(
         "  {} {}",
-        "Total original:".dimmed(),
+        t("total_original").dimmed(),
         format_size(total_original).bright_white()
     );
     println!(
         "  {} {}",
-        "Total compressed:".dimmed(),
+        t("total_compressed").dimmed(),
         format_size(total_compressed).bright_green()
     );
     println!(
         "  {} {} ({:.1}%)",
-        "Total saved:".dimmed(),
+        t("total_saved").dimmed(),
         format_size(total_saved).bright_yellow(),
         avg_ratio
     );
     println!(
         "  {} {:.2}s",
-        "Total time:".dimmed(),
+        t("total_time").dimmed(),
         total_elapsed.as_secs_f64()
     );
     println!();
 
     // Show individual results
-    println!("{}", "Individual Results".bright_white().bold());
+    println!("{}", t("individual_results").bright_white().bold());
     println!("{}", "─".repeat(30).dimmed());
 
     for (i, file_result) in results.iter().enumerate() {
@@ -650,7 +651,7 @@ pub fn print_batch_summary(results: &[BatchFileResult], total_elapsed: std::time
     }
 
     println!();
-    println!("{}", "━".repeat(50).dimmed());
+    println!("{}", t("header_separator").dimmed());
     println!();
 }
 

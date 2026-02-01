@@ -5,11 +5,12 @@ use std::io::{self, Write};
 use crate::domain::{CompressionConfig, CropCoordinates, FlipOptions, OutputFormat, Preset, VideoTransforms};
 use crate::error::Result;
 use crate::fs;
+use crate::localization::t;
 
 /// Wait for user to press Enter before exiting
 pub fn wait_for_exit() {
     println!();
-    println!("{}", "Press Enter to exit...".dimmed());
+    println!("{}", t("press_enter_to_exit").dimmed());
     let _ = io::stdout().flush();
     let mut input = String::new();
     let _ = io::stdin().read_line(&mut input);
@@ -17,7 +18,12 @@ pub fn wait_for_exit() {
 
 /// Run interactive mode - wizard for video compression
 /// If input_path is provided, skip the file selection step
-pub fn run_interactive(provided_path: Option<String>) -> Result<Option<CompressionConfig>> {
+pub fn run_interactive(provided_path: Option<String>, should_ask_language: bool) -> Result<Option<CompressionConfig>> {
+    // Ask for language if this is the initial launch (no arguments provided)
+    if should_ask_language {
+        ask_language_selection()?;
+    }
+
     print_interactive_header();
 
     // Step 1: Get input file path (or use provided one)
@@ -25,7 +31,7 @@ pub fn run_interactive(provided_path: Option<String>) -> Result<Option<Compressi
         // Clean up path (remove quotes that Windows adds when dragging)
         let cleaned = path.trim().trim_matches('"').trim_matches('\'').to_string();
 
-        println!("{} {}", "File:".dimmed(), cleaned.bright_cyan());
+        println!("{} {}", t("file").dimmed(), cleaned.bright_cyan());
         println!();
 
         cleaned
@@ -41,18 +47,18 @@ pub fn run_interactive(provided_path: Option<String>) -> Result<Option<Compressi
 
     // Validate input file
     if !fs::file_exists(&input_path) {
-        println!("{}", "File not found!".bright_red());
+        println!("{}", t("file_not_found").bright_red());
         wait_for_exit();
         return Ok(None);
     }
 
     if !fs::is_video_file(&input_path) {
-        println!("{}", "This is not a valid video file!".bright_red());
+        println!("{}", t("not_a_valid_video_file").bright_red());
         wait_for_exit();
         return Ok(None);
     }
 
-    println!("{} {}", "Selected:".dimmed(), input_path.bright_green());
+    println!("{} {}", t("selected").dimmed(), input_path.bright_green());
     println!();
 
     // Step 2: Compression settings
@@ -61,24 +67,53 @@ pub fn run_interactive(provided_path: Option<String>) -> Result<Option<Compressi
     Ok(Some(config))
 }
 
+/// Ask user to select language
+pub fn ask_language_selection() -> Result<()> {
+    use dialoguer::{theme::ColorfulTheme, Select};
+    use crate::localization::{set_language, Language};
+
+    let theme = ColorfulTheme::default();
+    let language_options = vec![
+        "English",
+        "Русский",
+    ];
+
+    let language_idx = Select::with_theme(&theme)
+        .with_prompt("Select language / Выберите язык")
+        .items(&language_options)
+        .default(0)
+        .interact()
+        .unwrap_or(0);
+
+    let language = if language_idx == 1 {
+        Language::Russian
+    } else {
+        Language::English
+    };
+
+    set_language(language);
+
+    Ok(())
+}
+
 fn print_interactive_header() {
     println!();
-    println!("{}", "━".repeat(50).dimmed());
+    println!("{}", t("header_separator").dimmed());
     println!(
         "{}",
-        "  CompressO CLI v1.1.0 - Interactive Mode".bright_cyan().bold()
+        format!("  {} {} - {}", t("app_name"), t("app_version"), t("interactive_mode")).bright_cyan().bold()
     );
-    println!("{}", "━".repeat(50).dimmed());
+    println!("{}", t("header_separator").dimmed());
     println!();
 }
 
 fn prompt_input_path() -> Result<String> {
-    println!("{}", "Drag & drop video file here or enter path:".bright_white());
-    println!("{}", "(Press Enter without input to exit)".dimmed());
+    println!("{}", t("drag_drop_video").bright_white());
+    println!("{}", t("press_enter_without_input").dimmed());
     println!();
 
     let input: String = Input::with_theme(&ColorfulTheme::default())
-        .with_prompt("Video path")
+        .with_prompt(t("video_path"))
         .allow_empty(true)
         .interact_text()
         .unwrap_or_default();
@@ -97,17 +132,17 @@ fn prompt_compression_settings(input_path: &str) -> Result<CompressionConfig> {
     let theme = ColorfulTheme::default();
 
     // Preset selection
-    println!("{}", "Compression Settings".bright_white().bold());
+    println!("{}", t("compression_settings").bright_white().bold());
     println!("{}", "─".repeat(30).dimmed());
     println!();
 
     let presets = vec![
-        "Ironclad (slow, best quality) [default]",
-        "Thunderbolt (fast, good quality)",
+        t("ironclad_slow_best_quality"),
+        t("thunderbolt_fast_good_quality"),
     ];
 
     let preset_idx = Select::with_theme(&theme)
-        .with_prompt("Select preset")
+        .with_prompt(t("select_preset"))
         .items(&presets)
         .default(0)
         .interact()
@@ -120,7 +155,7 @@ fn prompt_compression_settings(input_path: &str) -> Result<CompressionConfig> {
 
     // Quality
     let quality: u8 = Input::with_theme(&theme)
-        .with_prompt("Quality (0-100, higher = better)")
+        .with_prompt(t("quality_prompt"))
         .default(70)
         .validate_with(|input: &u8| {
             if *input <= 100 {
@@ -134,16 +169,16 @@ fn prompt_compression_settings(input_path: &str) -> Result<CompressionConfig> {
 
     // Output format
     let formats = vec![
-        "Keep original format [default]",
-        "MP4",
-        "WebM",
-        "MKV",
-        "AVI",
-        "MOV",
+        t("keep_original_format"),
+        t("mp4_format"),
+        t("webm_format"),
+        t("mkv_format"),
+        t("avi_format"),
+        t("mov_format"),
     ];
 
     let format_idx = Select::with_theme(&theme)
-        .with_prompt("Output format")
+        .with_prompt(t("output_format"))
         .items(&formats)
         .default(0)
         .interact()
@@ -159,9 +194,9 @@ fn prompt_compression_settings(input_path: &str) -> Result<CompressionConfig> {
     };
 
     // Advanced settings
-    let advanced_options = vec!["No", "Yes"];
+    let advanced_options = vec![t("no"), t("yes")];
     let show_advanced = Select::with_theme(&theme)
-        .with_prompt("Configure advanced settings?")
+        .with_prompt(t("configure_advanced_settings"))
         .items(&advanced_options)
         .default(0)
         .interact()
@@ -178,14 +213,14 @@ fn prompt_compression_settings(input_path: &str) -> Result<CompressionConfig> {
 
     if show_advanced {
         println!();
-        println!("{}", "Advanced Settings".bright_white().bold());
+        println!("{}", t("advanced_settings").bright_white().bold());
         println!("{}", "─".repeat(30).dimmed());
-        println!("{}", "(Leave empty to keep original)".dimmed());
+        println!("{}", t("leave_empty_keep_original").dimmed());
         println!();
 
         // Resolution
         let width_input: String = Input::with_theme(&theme)
-            .with_prompt("Width (e.g., 1920)")
+            .with_prompt(t("width_prompt"))
             .allow_empty(true)
             .interact_text()
             .unwrap_or_default();
@@ -195,7 +230,7 @@ fn prompt_compression_settings(input_path: &str) -> Result<CompressionConfig> {
         }
 
         let height_input: String = Input::with_theme(&theme)
-            .with_prompt("Height (e.g., 1080)")
+            .with_prompt(t("height_prompt"))
             .allow_empty(true)
             .interact_text()
             .unwrap_or_default();
@@ -206,7 +241,7 @@ fn prompt_compression_settings(input_path: &str) -> Result<CompressionConfig> {
 
         // FPS
         let fps_input: String = Input::with_theme(&theme)
-            .with_prompt("FPS (e.g., 30)")
+            .with_prompt(t("fps_prompt"))
             .allow_empty(true)
             .interact_text()
             .unwrap_or_default();
@@ -216,9 +251,9 @@ fn prompt_compression_settings(input_path: &str) -> Result<CompressionConfig> {
         }
 
         // Mute
-        let mute_options = vec!["No", "Yes"];
+        let mute_options = vec![t("no"), t("yes")];
         let mute_idx = Select::with_theme(&theme)
-            .with_prompt("Remove audio?")
+            .with_prompt(t("remove_audio"))
             .items(&mute_options)
             .default(0)
             .interact()
@@ -226,20 +261,20 @@ fn prompt_compression_settings(input_path: &str) -> Result<CompressionConfig> {
         mute = mute_idx == 1;
 
         println!();
-        println!("{}", "Transform Options".bright_white().bold());
+        println!("{}", t("transform_options").bright_white().bold());
         println!("{}", "─".repeat(30).dimmed());
         println!();
 
         // Rotate
         let rotation_options = vec![
-            "None (keep original)",
-            "90° clockwise",
-            "180°",
-            "270° clockwise (90° counter-clockwise)",
+            t("none_keep_original"),
+            t("ninety_clockwise"),
+            t("one_eighty"),
+            t("two_seventy_clockwise"),
         ];
 
         let rotation_idx = Select::with_theme(&theme)
-            .with_prompt("Rotate video")
+            .with_prompt(t("rotate_video"))
             .items(&rotation_options)
             .default(0)
             .interact()
@@ -253,18 +288,18 @@ fn prompt_compression_settings(input_path: &str) -> Result<CompressionConfig> {
         };
 
         // Flip
-        let flip_h_options = vec!["No", "Yes"];
+        let flip_h_options = vec![t("no"), t("yes")];
         let flip_h_idx = Select::with_theme(&theme)
-            .with_prompt("Flip horizontally (mirror)?")
+            .with_prompt(t("flip_horizontally"))
             .items(&flip_h_options)
             .default(0)
             .interact()
             .unwrap_or(0);
         flip_horizontal = flip_h_idx == 1;
 
-        let flip_v_options = vec!["No", "Yes"];
+        let flip_v_options = vec![t("no"), t("yes")];
         let flip_v_idx = Select::with_theme(&theme)
-            .with_prompt("Flip vertically?")
+            .with_prompt(t("flip_vertically"))
             .items(&flip_v_options)
             .default(0)
             .interact()
@@ -273,8 +308,8 @@ fn prompt_compression_settings(input_path: &str) -> Result<CompressionConfig> {
 
         // Crop
         println!();
-        println!("{}", "Crop video (format: WIDTHxHEIGHT:X:Y)".dimmed());
-        println!("{}", "Example: 1920x1080:0:0 (crop to 1920x1080 from top-left corner)".dimmed());
+        println!("{}", t("crop_video").dimmed());
+        println!("{}", t("crop_example").dimmed());
 
         let crop_input: String = Input::with_theme(&theme)
             .with_prompt("Crop")
@@ -322,31 +357,31 @@ fn prompt_compression_settings(input_path: &str) -> Result<CompressionConfig> {
 
     // Summary and confirmation
     println!();
-    println!("{}", "━".repeat(50).dimmed());
-    println!("{}", "Summary".bright_white().bold());
+    println!("{}", t("header_separator").dimmed());
+    println!("{}", t("summary").bright_white().bold());
     println!("{}", "─".repeat(30).dimmed());
-    println!("  {} {}", "Input:".dimmed(), input_path.bright_white());
-    println!("  {} {}", "Output:".dimmed(), output_path.bright_cyan());
+    println!("  {} {}", t("input").dimmed(), input_path.bright_white());
+    println!("  {} {}", t("output").dimmed(), output_path.bright_cyan());
     println!(
         "  {} {}",
-        "Preset:".dimmed(),
+        t("preset").dimmed(),
         match preset {
-            Preset::Thunderbolt => "Thunderbolt".bright_green(),
-            Preset::Ironclad => "Ironclad".bright_blue(),
+            Preset::Thunderbolt => t("thunderbolt_preset").bright_green(),
+            Preset::Ironclad => t("ironclad_preset").bright_blue(),
         }
     );
-    println!("  {} {}%", "Quality:".dimmed(), quality.to_string().bright_yellow());
+    println!("  {} {}%", t("quality").dimmed(), quality.to_string().bright_yellow());
 
     // Show size estimate range
     println!();
     println!(
         "  {} {}",
-        "Original size:".dimmed(),
+        t("original_size").dimmed(),
         fs::format_size(original_size).bright_white()
     );
     println!(
         "  {} {} - {}",
-        "Est. output:".dimmed(),
+        t("est_output").dimmed(),
         fs::format_size(estimated_min).bright_cyan(),
         fs::format_size(estimated_max).bright_cyan()
     );
@@ -354,31 +389,31 @@ fn prompt_compression_settings(input_path: &str) -> Result<CompressionConfig> {
     let savings_pct = ((original_size.saturating_sub(avg_estimated)) as f64 / original_size as f64) * 100.0;
     println!(
         "  {} ~{:.0}%",
-        "Est. savings:".dimmed(),
+        t("est_savings").dimmed(),
         savings_pct.to_string().bright_green()
     );
 
     if let Some(f) = format {
-        println!("  {} {}", "Format:".dimmed(), f.extension().bright_white());
+        println!("  {} {}", t("format").dimmed(), f.extension().bright_white());
     }
 
     if let (Some(w), Some(h)) = (width, height) {
-        println!("  {} {}x{}", "Resolution:".dimmed(), w, h);
+        println!("  {} {}x{}", t("dimensions").dimmed(), w, h);
     }
 
     if let Some(f) = fps {
-        println!("  {} {} fps", "FPS:".dimmed(), f);
+        println!("  {} {} fps", t("fps").dimmed(), f);
     }
 
     if mute {
-        println!("  {} {}", "Audio:".dimmed(), "muted".bright_red());
+        println!("  {} {}", t("audio").dimmed(), t("muted").bright_red());
     }
 
     // Display transforms if any
     if rotate.is_some() || flip_horizontal || flip_vertical || crop.is_some() {
         println!();
         if let Some(r) = rotate {
-            println!("  {} {}°", "Rotate:".dimmed(), r.to_string().bright_cyan());
+            println!("  {} {}°", t("rotate").dimmed(), r.to_string().bright_cyan());
         }
 
         if flip_horizontal || flip_vertical {
@@ -388,13 +423,13 @@ fn prompt_compression_settings(input_path: &str) -> Result<CompressionConfig> {
                 (false, true) => "vertical",
                 _ => "",
             };
-            println!("  {} {}", "Flip:".dimmed(), flip_desc.bright_cyan());
+            println!("  {} {}", t("flip").dimmed(), flip_desc.bright_cyan());
         }
 
         if let Some(c) = &crop {
             println!(
                 "  {} {}x{} at ({}, {})",
-                "Crop:".dimmed(),
+                t("crop").dimmed(),
                 c.width.to_string().bright_cyan(),
                 c.height.to_string().bright_cyan(),
                 c.x,
@@ -403,19 +438,19 @@ fn prompt_compression_settings(input_path: &str) -> Result<CompressionConfig> {
         }
     }
 
-    println!("{}", "━".repeat(50).dimmed());
+    println!("{}", t("header_separator").dimmed());
     println!();
 
-    let proceed_options = vec!["No", "Yes"];
+    let proceed_options = vec![t("no"), t("yes")];
     let proceed = Select::with_theme(&theme)
-        .with_prompt("Start compression?")
+        .with_prompt(t("start_compression"))
         .items(&proceed_options)
         .default(1)
         .interact()
         .unwrap_or(1) == 1;
 
     if !proceed {
-        println!("{}", "Compression cancelled.".bright_yellow());
+        println!("{}", t("compression_cancelled").bright_yellow());
         std::process::exit(0);
     }
 

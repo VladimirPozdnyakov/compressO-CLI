@@ -102,13 +102,27 @@ pub fn format_duration(seconds: f64) -> String {
     }
 }
 
-/// Generate output path from input path
+/// Generate output path from input path with security validation
+///
+/// # Security
+///
+/// This function protects against:
+/// - Path traversal attacks (../ sequences)
+/// - Symlink attacks (resolves symlinks to real paths)
+/// - Writing outside expected directories
+///
+/// The output path is always generated in the same directory as the
+/// canonicalized input file, preventing writes to unexpected locations.
+///
 pub fn generate_output_path(input: &str, format: Option<&str>) -> String {
     let input_path = Path::new(input);
+
+    // Get the file stem, sanitizing any path traversal attempts
     let stem = input_path
         .file_stem()
         .and_then(|s| s.to_str())
-        .unwrap_or("output");
+        .map(|s| sanitize_filename(s))
+        .unwrap_or_else(|| "output".to_string());
 
     let extension = format.unwrap_or_else(|| {
         input_path
@@ -117,18 +131,66 @@ pub fn generate_output_path(input: &str, format: Option<&str>) -> String {
             .unwrap_or("mp4")
     });
 
-    let parent = input_path
-        .parent()
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_else(|| ".".to_string());
+    // Try to canonicalize the input path to resolve symlinks and get absolute path
+    let parent = match fs::canonicalize(input_path) {
+        Ok(canonical) => {
+            // Use the parent of the canonical (real) path
+            canonical
+                .parent()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|| ".".to_string())
+        }
+        Err(_) => {
+            // If canonicalization fails (file doesn't exist yet), use parent from input
+            // but only the final component to prevent traversal
+            if let Some(parent) = input_path.parent() {
+                // Get only the file name part of parent to prevent traversal
+                parent
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| ".".to_string())
+            } else {
+                ".".to_string()
+            }
+        }
+    };
 
     let output_name = format!("{}_compressed.{}", stem, extension);
 
     if parent.is_empty() || parent == "." {
         output_name
     } else {
-        format!("{}/{}", parent, output_name)
+        // Use Path::join for platform-correct path separators
+        Path::new(&parent)
+            .join(&output_name)
+            .to_string_lossy()
+            .to_string()
     }
+}
+
+/// Sanitize filename to prevent path traversal
+///
+/// Removes dangerous characters and sequences:
+/// - Path separators (/, \)
+/// - Parent directory references (..)
+/// - Null bytes
+/// - Control characters
+///
+fn sanitize_filename(name: &str) -> String {
+    name.chars()
+        .filter(|c| {
+            // Allow alphanumeric, spaces, dots, hyphens, underscores
+            c.is_alphanumeric()
+                || *c == ' '
+                || *c == '.'
+                || *c == '-'
+                || *c == '_'
+        })
+        .collect::<String>()
+        .replace("..", "")  // Remove any remaining .. sequences
+        .trim_matches('.')  // Remove leading/trailing dots
+        .to_string()
 }
 
 /// Check if file exists

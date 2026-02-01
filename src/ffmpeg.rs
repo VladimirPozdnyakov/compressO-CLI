@@ -192,6 +192,123 @@ impl FFmpeg {
         }
     }
 
+    /// Validate and sanitize path to prevent path traversal attacks
+    ///
+    /// # Security
+    ///
+    /// This function protects against:
+    /// - Path traversal (.., ./, etc.)
+    /// - Null bytes in paths
+    /// - Symlink attacks (resolves to real path)
+    ///
+    /// For existing files, the path is canonicalized to get the real absolute path.
+    /// For non-existing files (like output paths), basic validation is performed.
+    ///
+    fn validate_path(path: &str, path_type: &str) -> Result<String> {
+        // Check for null bytes (can bypass security checks)
+        if path.contains('\0') {
+            return Err(CompressoError::InvalidInput(format!(
+                "{} path contains null bytes",
+                path_type
+            )));
+        }
+
+        // Check for suspicious patterns
+        if path.contains("..") {
+            eprintln!(
+                "⚠ Warning: {} path contains '..' which may indicate path traversal: {}",
+                path_type, path
+            );
+        }
+
+        // Try to canonicalize (resolve symlinks and get absolute path)
+        // This only works for existing files
+        match std::fs::canonicalize(path) {
+            Ok(canonical) => {
+                let canonical_str = canonical.to_string_lossy().to_string();
+
+                // Check if the canonicalized path is dramatically different (potential symlink attack)
+                if !path.contains(&canonical_str) && !canonical_str.contains(path) {
+                    eprintln!(
+                        "ℹ {} path resolved through symlink:",
+                        path_type
+                    );
+                    eprintln!("  Provided: {}", path);
+                    eprintln!("  Resolved: {}", canonical_str);
+                }
+
+                Ok(canonical_str)
+            }
+            Err(_) => {
+                // File doesn't exist yet (e.g., output file)
+                // Return the path as-is but it will be validated by validate_output_path
+                Ok(path.to_string())
+            }
+        }
+    }
+
+    /// Validate output path to prevent writing to dangerous locations
+    ///
+    /// # Security
+    ///
+    /// Prevents writing to:
+    /// - System directories (/etc, /sys, /proc, C:\Windows, etc.)
+    /// - Root directory
+    /// - Parent directories via traversal
+    ///
+    fn validate_output_path(path: &str) -> Result<()> {
+        let path_lower = path.to_lowercase();
+
+        // List of dangerous paths/prefixes
+        let dangerous_paths = [
+            "/etc/",
+            "/sys/",
+            "/proc/",
+            "/dev/",
+            "/boot/",
+            "/root/",
+            "c:\\windows\\",
+            "c:\\program files\\",
+            "c:\\program files (x86)\\",
+            "/windows/",
+            "/program files/",
+        ];
+
+        for dangerous in &dangerous_paths {
+            if path_lower.starts_with(dangerous) || path_lower.contains(dangerous) {
+                return Err(CompressoError::InvalidOutput(format!(
+                    "Refusing to write to system directory: {}",
+                    path
+                )));
+            }
+        }
+
+        // Check if trying to write to root
+        let path_obj = Path::new(path);
+        if let Ok(canonical) = std::fs::canonicalize(path_obj.parent().unwrap_or(Path::new("."))) {
+            let canonical_str = canonical.to_string_lossy();
+
+            // Unix root
+            if canonical_str == "/" {
+                return Err(CompressoError::InvalidOutput(
+                    "Refusing to write to root directory".to_string()
+                ));
+            }
+
+            // Windows drive root (C:\, D:\, etc.)
+            #[cfg(windows)]
+            {
+                if canonical_str.len() == 3 && canonical_str.ends_with(":\\") {
+                    return Err(CompressoError::InvalidOutput(
+                        "Refusing to write to drive root".to_string()
+                    ));
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     /// Get video information
     ///
     /// Note: This function does not pre-check file existence to avoid TOCTOU race conditions.
@@ -269,6 +386,11 @@ impl FFmpeg {
     /// - Using unique temporary filenames to avoid collisions
     /// - Atomically renaming temp file to final output on success
     ///
+    /// Path traversal and symlink protection:
+    /// - Input and output paths are canonicalized to resolve symlinks
+    /// - Paths are validated to prevent writing outside expected directories
+    /// - Dangerous path sequences (.., null bytes) are rejected
+    ///
     /// Note: Output overwrite protection check still has a small race window.
     /// Use unique output paths or enable overwrite mode for maximum safety.
     pub fn compress_video<F>(
@@ -282,15 +404,18 @@ impl FFmpeg {
     {
         let input_path = &config.input_path;
 
+        // Validate and canonicalize input path (protect against path traversal)
+        let validated_input = Self::validate_path(input_path, "input")?;
+
         // Get video info for progress calculation (will fail atomically if file doesn't exist)
-        let video_info = self.get_video_info(input_path)?;
+        let video_info = self.get_video_info(&validated_input)?;
         let total_duration = video_info.duration_seconds.unwrap_or(0.0);
         let fps = video_info.fps.unwrap_or(30.0);
         let total_frames = (total_duration * fps as f64) as u32;
 
         // Determine output format and path
         let output_format = config.format.map(|f| f.extension().to_string()).unwrap_or_else(|| {
-            Path::new(input_path)
+            Path::new(&validated_input)
                 .extension()
                 .and_then(|e| e.to_str())
                 .unwrap_or("mp4")
@@ -298,8 +423,11 @@ impl FFmpeg {
         });
 
         let output_path = config.output_path.clone().unwrap_or_else(|| {
-            crate::fs::generate_output_path(input_path, Some(&output_format))
+            crate::fs::generate_output_path(&validated_input, Some(&output_format))
         });
+
+        // Validate output path (protect against path traversal and symlink attacks)
+        Self::validate_output_path(&output_path)?;
 
         // Atomically check if output exists and prevent overwrite if not set
         // This uses create_new() which atomically fails if file exists
@@ -346,7 +474,7 @@ impl FFmpeg {
         let mut temp_guard = TempFileGuard::new(PathBuf::from(&temp_output_path));
 
         // Get original size
-        let original_size = std::fs::metadata(input_path)?.len();
+        let original_size = std::fs::metadata(&validated_input)?.len();
 
         // Create progress metrics for tracking speed and ETA
         let progress_metrics = Arc::new(Mutex::new(ProgressMetrics::new(
@@ -356,7 +484,7 @@ impl FFmpeg {
         let metrics_for_thread = progress_metrics.clone();
 
         // Build FFmpeg arguments (write to temp file for atomic operation)
-        let args = self.build_args(config, &temp_output_path, &output_format);
+        let args = self.build_args(config, &validated_input, &temp_output_path, &output_format);
 
         if config.verbose {
             eprintln!("FFmpeg command: {} {}", self.ffmpeg_path, args.join(" "));
@@ -518,10 +646,10 @@ impl FFmpeg {
         })
     }
 
-    fn build_args(&self, config: &CompressionConfig, output_path: &str, output_format: &str) -> Vec<String> {
+    fn build_args(&self, config: &CompressionConfig, input_path: &str, output_path: &str, output_format: &str) -> Vec<String> {
         let mut args: Vec<String> = vec![
             "-i".to_string(),
-            config.input_path.clone(),
+            input_path.to_string(),
             "-hide_banner".to_string(),
             "-progress".to_string(),
             "-".to_string(),

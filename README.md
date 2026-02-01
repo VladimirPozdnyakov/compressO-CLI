@@ -7,6 +7,10 @@ Fast, secure, and efficient video compression tool powered by FFmpeg with multil
 [![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org/)
 
+**Read this document in:**
+- [English (you are here)](README.md)
+- [Русский](README_RU.md)
+
 ## 🌍 Languages
 
 CompressO CLI supports multiple languages:

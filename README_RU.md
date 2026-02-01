@@ -7,6 +7,10 @@
 [![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org/)
 
+**Читать этот документ на:**
+- [Английском](README.md)
+- [Русском (вы здесь)](README_RU.md)
+
 ## 🌍 Языки
 
 CompressO CLI поддерживает несколько языков:

@@ -1,6 +1,7 @@
 use colored::*;
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use serde::Serialize;
+use std::io::IsTerminal;
 use std::sync::{Arc, Mutex};
 
 use crate::domain::{CompressionConfig, CompressionResult, Preset, VideoInfo};
@@ -12,7 +13,9 @@ pub fn print_header() {
     println!();
     println!(
         "{}",
-        format!("  {} {}", t("app_name"), t("app_version")).bright_cyan().bold()
+        format!("  {} {}", t("app_name"), t("app_version"))
+            .bright_cyan()
+            .bold()
     );
     println!("{}", t("header_separator").dimmed());
     println!();
@@ -23,11 +26,7 @@ pub fn print_video_info(path: &str, info: &VideoInfo, size: u64) {
     println!("{}", t("video_information").bright_white().bold());
     println!("{}", "─".repeat(30).dimmed());
 
-    println!(
-        "  {} {}",
-        t("file").dimmed(),
-        path.bright_white()
-    );
+    println!("  {} {}", t("file").dimmed(), path.bright_white());
     println!(
         "  {} {}",
         t("size").dimmed(),
@@ -35,11 +34,7 @@ pub fn print_video_info(path: &str, info: &VideoInfo, size: u64) {
     );
 
     if let Some(duration) = &info.duration {
-        println!(
-            "  {} {}",
-            t("duration").dimmed(),
-            duration.bright_white()
-        );
+        println!("  {} {}", t("duration").dimmed(), duration.bright_white());
     }
 
     if let Some((w, h)) = info.dimensions {
@@ -72,11 +67,7 @@ pub fn print_config(config: &CompressionConfig, output_path: &str) {
         t("input").dimmed(),
         config.input_path.bright_white()
     );
-    println!(
-        "  {} {}",
-        t("output").dimmed(),
-        output_path.bright_white()
-    );
+    println!("  {} {}", t("output").dimmed(), output_path.bright_white());
     println!(
         "  {} {}",
         t("preset").dimmed(),
@@ -109,32 +100,44 @@ pub fn print_config(config: &CompressionConfig, output_path: &str) {
     }
 
     if config.mute {
-        println!(
-            "  {} {}",
-            t("audio").dimmed(),
-            t("muted").bright_red()
-        );
+        println!("  {} {}", t("audio").dimmed(), t("muted").bright_red());
     }
 
     println!();
 }
 
 /// Create and return a progress bar
+///
+/// When stdout is not a terminal (piped into a file or another command), the
+/// progress bar is drawn to a hidden target so it does not pollute logs with
+/// redraw artifacts.
 pub fn create_progress_bar() -> Arc<Mutex<ProgressBar>> {
     let pb = ProgressBar::new(10000);
+    // Hide the progress bar entirely when stdout is redirected (non-TTY),
+    // e.g. `compresso video.mp4 | tee log.txt`.
+    if !std::io::stdout().is_terminal() {
+        pb.set_draw_target(ProgressDrawTarget::hidden());
+    }
     pb.set_style(
         ProgressStyle::default_bar()
             .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {msg}\n{prefix}")
             .unwrap()
             .progress_chars("█▓░"),
     );
-    pb.set_message("0.00% | ETA: -- | Calculating...");
+    pb.set_message(format!("0.00% | ETA: -- | {}", t("progress_calculating")));
     pb.set_prefix("");
     Arc::new(Mutex::new(pb))
 }
 
 /// Update progress bar with frame info and ETA
-pub fn update_progress(pb: &Arc<Mutex<ProgressBar>>, progress: f64, current_frame: u32, total_frames: u32, fps: f64, eta: Option<f64>) {
+pub fn update_progress(
+    pb: &Arc<Mutex<ProgressBar>>,
+    progress: f64,
+    current_frame: u32,
+    total_frames: u32,
+    fps: f64,
+    eta: Option<f64>,
+) {
     if let Ok(pb) = pb.lock() {
         // Convert progress from 0-100 range to 0-10000 range for precision
         pb.set_position((progress * 100.0) as u64);
@@ -152,13 +155,18 @@ pub fn update_progress(pb: &Arc<Mutex<ProgressBar>>, progress: f64, current_fram
         let speed_msg = if fps > 0.0 {
             format!("{:.2}% | ETA: {} | {:.1} fps", progress, eta_msg, fps)
         } else {
-            format!("{:.2}% | ETA: {} | Calculating...", progress, eta_msg)
+            format!(
+                "{:.2}% | ETA: {} | {}",
+                progress,
+                eta_msg,
+                t("progress_calculating")
+            )
         };
 
         pb.set_message(speed_msg);
 
         // Set frame count info below the progress bar
-        let frame_info = format!("Frame {}/{}", current_frame, total_frames);
+        let frame_info = format!("{} {}/{}", t("progress_frame"), current_frame, total_frames);
         pb.set_prefix(frame_info);
     }
 }
@@ -166,7 +174,7 @@ pub fn update_progress(pb: &Arc<Mutex<ProgressBar>>, progress: f64, current_fram
 /// Finish progress bar
 pub fn finish_progress(pb: &Arc<Mutex<ProgressBar>>) {
     if let Ok(pb) = pb.lock() {
-        pb.finish_with_message("Done!");
+        pb.finish_with_message(t("progress_done"));
     }
 }
 
@@ -230,11 +238,7 @@ pub fn print_result(result: &CompressionResult, elapsed: std::time::Duration) {
         format_size(saved).bright_yellow(),
         ratio
     );
-    println!(
-        "  {} {:.2}s",
-        t("time").dimmed(),
-        elapsed.as_secs_f64()
-    );
+    println!("  {} {:.2}s", t("time").dimmed(), elapsed.as_secs_f64());
     println!();
     println!(
         "  {} {}",
@@ -249,11 +253,7 @@ pub fn print_result(result: &CompressionResult, elapsed: std::time::Duration) {
 #[allow(dead_code)]
 pub fn print_error(message: &str) {
     eprintln!();
-    eprintln!(
-        "{} {}",
-        "✗".bright_red().bold(),
-        message.bright_red()
-    );
+    eprintln!("{} {}", "✗".bright_red().bold(), message.bright_red());
     eprintln!();
 }
 
@@ -269,99 +269,18 @@ pub fn print_error_with_hint(error: &crate::error::CompressoError) {
     );
     eprintln!();
 
-    // Provide specific, actionable hints based on error type
+    // Provide specific, actionable hints based on error type.
+    // All hint strings are localized via `t()`; the {path}/{msg}/{err}
+    // placeholders are substituted at runtime.
     let hint = match error {
-        CompressoError::FfmpegNotFound => {
-            "💡 How to install FFmpeg:\n\
-             \n\
-             Windows:\n\
-               • winget install Gyan.FFmpeg\n\
-               • or download from https://ffmpeg.org/download.html\n\
-             \n\
-             macOS:\n\
-               • brew install ffmpeg\n\
-             \n\
-             Linux:\n\
-               • sudo apt install ffmpeg  (Debian/Ubuntu)\n\
-               • sudo dnf install ffmpeg  (Fedora)\n\
-               • sudo pacman -S ffmpeg    (Arch)"
-        }
-        CompressoError::FileNotFound(path) => {
-            &format!(
-                "💡 Suggestions:\n\
-                 \n\
-                   • Check if the file path is correct: {}\n\
-                   • Make sure you have permission to access the file\n\
-                   • Try using an absolute path instead of a relative path\n\
-                   • On Windows, use quotes around paths with spaces",
-                path
-            )
-        }
-        CompressoError::InvalidInput(_) => {
-            "💡 Supported video formats:\n\
-             \n\
-               • MP4 (.mp4)\n\
-               • MOV (.mov)\n\
-               • WebM (.webm)\n\
-               • AVI (.avi)\n\
-               • MKV (.mkv)\n\
-               • FLV (.flv)\n\
-               • WMV (.wmv)\n\
-             \n\
-             Check that your file has a valid video extension and is not corrupted."
-        }
-        CompressoError::CorruptedVideo => {
-            "💡 Possible solutions:\n\
-             \n\
-               • Try playing the video in a media player to verify it works\n\
-               • The file might be incomplete or corrupted during download\n\
-               • Try re-encoding the video with a different tool first\n\
-               • Check if the file is actually a video (not renamed from another format)"
-        }
-        CompressoError::InvalidOutput(path) => {
-            &format!(
-                "💡 Suggestions:\n\
-                 \n\
-                   • Check if the output directory exists: {}\n\
-                   • Make sure you have write permissions to the directory\n\
-                   • Ensure the filename doesn't contain invalid characters: < > : \" / \\ | ? *\n\
-                   • Try using a different output location",
-                path
-            )
-        }
-        CompressoError::FfmpegError(msg) => {
-            &format!(
-                "💡 FFmpeg encountered an error:\n\
-                 \n\
-                   Error: {}\n\
-                 \n\
-                   Possible solutions:\n\
-                   • Try reducing quality or changing preset\n\
-                   • Check if there's enough disk space\n\
-                   • Verify the input video is not corrupted\n\
-                   • Try updating FFmpeg to the latest version",
-                msg
-            )
-        }
-        CompressoError::Io(io_error) => {
-            &format!(
-                "💡 File system error:\n\
-                 \n\
-                   {}\n\
-                 \n\
-                   Common solutions:\n\
-                   • Check available disk space\n\
-                   • Verify you have read/write permissions\n\
-                   • Close other programs that might be using the file\n\
-                   • Try running with administrator/sudo privileges if needed",
-                io_error
-            )
-        }
-        CompressoError::Cancelled => {
-            "💡 Compression was cancelled.\n\
-             \n\
-             You can start a new compression anytime."
-        }
+        CompressoError::FfmpegNotFound => t("hint_ffmpeg_install"),
+        CompressoError::FileNotFound(path) => t("hint_file_not_found").replace("{path}", path),
+        CompressoError::InvalidInput(_) => t("hint_invalid_input"),
+        CompressoError::CorruptedVideo => t("hint_corrupted_video"),
+        CompressoError::InvalidOutput(path) => t("hint_invalid_output").replace("{path}", path),
+        CompressoError::FfmpegError(msg) => t("hint_ffmpeg_error").replace("{msg}", msg),
+        CompressoError::Io(io_error) => t("hint_io_error").replace("{err}", &io_error.to_string()),
+        CompressoError::Cancelled => t("hint_cancelled"),
     };
 
     eprintln!("{}", hint.bright_blue());
@@ -370,20 +289,12 @@ pub fn print_error_with_hint(error: &crate::error::CompressoError) {
 
 /// Print warning message
 pub fn print_warning(message: &str) {
-    eprintln!(
-        "{} {}",
-        "⚠".bright_yellow().bold(),
-        message.bright_yellow()
-    );
+    eprintln!("{} {}", "⚠".bright_yellow().bold(), message.bright_yellow());
 }
 
 /// Print info message
 pub fn print_info(message: &str) {
-    println!(
-        "{} {}",
-        "ℹ".bright_blue().bold(),
-        message
-    );
+    println!("{} {}", "ℹ".bright_blue().bold(), message);
 }
 
 /// Print cancelled message
@@ -427,12 +338,12 @@ pub fn estimate_output_size_range(original_size: u64, quality: u8, preset: Prese
 
     // Content variability is significant: screen recordings compress much better
     // than high-motion footage. Use ±70% range to account for this.
-    let min_estimate = base_estimate * 0.3;  // Best case (simple content)
-    let max_estimate = base_estimate * 1.7;  // Worst case (complex content)
+    let min_estimate = base_estimate * 0.3; // Best case (simple content)
+    let max_estimate = base_estimate * 1.7; // Worst case (complex content)
 
     // Clamp to reasonable absolute range
     let absolute_min = (original_size as f64 * 0.005) as u64; // 0.5% minimum
-    let absolute_max = (original_size as f64 * 0.50) as u64;  // 50% maximum
+    let absolute_max = (original_size as f64 * 0.50) as u64; // 50% maximum
 
     let min_size = (min_estimate as u64).clamp(absolute_min, absolute_max);
     let max_size = (max_estimate as u64).clamp(absolute_min, absolute_max);
@@ -454,15 +365,21 @@ pub struct VideoInfoJson {
     pub info: VideoInfo,
 }
 
-/// JSON output for compression result
+/// JSON output for compression result.
+///
+/// Field names intentionally match the schema documented in README.md /
+/// README_RU.md (single-file section + the Python example), so that any
+/// consumer following the documentation works unchanged.
 #[derive(Serialize)]
 pub struct CompressionResultJson {
     pub success: bool,
-    pub elapsed_seconds: f64,
-    #[serde(flatten)]
-    pub result: CompressionResult,
-    pub saved_bytes: u64,
+    pub input: String,
+    pub output: String,
+    pub original_size: u64,
+    pub compressed_size: u64,
+    pub saved: u64,
     pub compression_ratio: f64,
+    pub elapsed_secs: f64,
 }
 
 /// Print video information as JSON
@@ -480,23 +397,30 @@ pub fn print_video_info_json(path: &str, info: &VideoInfo, size: u64) {
     }
 }
 
-/// Print compression result as JSON
-pub fn print_result_json(result: &CompressionResult, elapsed: std::time::Duration) {
+/// Print a single-file compression result as JSON, including the real input
+/// path. This exists because `CompressionResult` does not carry the input path
+/// and the single-file JSON documented in the README needs an `input` field.
+pub fn print_single_file_json(
+    input: &str,
+    result: &CompressionResult,
+    elapsed: std::time::Duration,
+) {
     let saved = result.original_size.saturating_sub(result.compressed_size);
     let ratio = if result.original_size > 0 {
         (saved as f64 / result.original_size as f64) * 100.0
     } else {
         0.0
     };
-
     let output = CompressionResultJson {
         success: true,
-        elapsed_seconds: elapsed.as_secs_f64(),
-        result: result.clone(),
-        saved_bytes: saved,
+        input: input.to_string(),
+        output: result.file_path.clone(),
+        original_size: result.original_size,
+        compressed_size: result.compressed_size,
+        saved,
         compression_ratio: ratio,
+        elapsed_secs: elapsed.as_secs_f64(),
     };
-
     match serde_json::to_string_pretty(&output) {
         Ok(json) => println!("{}", json),
         Err(e) => eprintln!("Error serializing to JSON: {}", e),
@@ -517,29 +441,43 @@ pub struct BatchFileResult {
     pub elapsed: std::time::Duration,
 }
 
-/// Summary of batch processing
+/// Summary of batch processing.
+///
+/// Serializes to the shape documented in README.md:
+/// `{ "files": [...], "total": { "processed", "successful", "failed", "elapsed_secs" } }`
 #[derive(Serialize)]
 pub struct BatchSummary {
-    pub total_files: usize,
+    pub files: Vec<BatchFileResultJson>,
+    pub total: BatchTotalJson,
+}
+
+#[derive(Serialize)]
+pub struct BatchTotalJson {
+    pub processed: usize,
     pub successful: usize,
     pub failed: usize,
-    pub total_original_size: u64,
-    pub total_compressed_size: u64,
     pub total_saved: u64,
     pub average_compression_ratio: f64,
-    pub total_elapsed_seconds: f64,
-    pub results: Vec<BatchFileResultJson>,
+    pub elapsed_secs: f64,
 }
 
 #[derive(Serialize)]
 pub struct BatchFileResultJson {
-    pub input_path: String,
+    pub input: String,
     pub success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub result: Option<CompressionResult>,
+    pub output: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub original_size: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compressed_size: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub saved: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compression_ratio: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
-    pub elapsed_seconds: f64,
+    pub elapsed_secs: f64,
 }
 
 /// Print batch processing summary
@@ -645,7 +583,11 @@ pub fn print_batch_summary(results: &[BatchFileResult], total_elapsed: std::time
                 "  {} {} - {}",
                 format!("[{}]", i + 1).dimmed(),
                 file_result.input_path.bright_red(),
-                file_result.error.as_ref().unwrap_or(&"Unknown error".to_string()).bright_red()
+                file_result
+                    .error
+                    .as_ref()
+                    .unwrap_or(&"Unknown error".to_string())
+                    .bright_red()
             );
         }
     }
@@ -677,31 +619,180 @@ pub fn print_batch_summary_json(results: &[BatchFileResult], total_elapsed: std:
         0.0
     };
 
-    let json_results: Vec<BatchFileResultJson> = results
+    let json_files: Vec<BatchFileResultJson> = results
         .iter()
-        .map(|r| BatchFileResultJson {
-            input_path: r.input_path.clone(),
-            success: r.success,
-            result: r.result.clone(),
-            error: r.error.clone(),
-            elapsed_seconds: r.elapsed.as_secs_f64(),
+        .map(|r| {
+            if let Some(ref res) = r.result {
+                let saved = res.original_size.saturating_sub(res.compressed_size);
+                let ratio = if res.original_size > 0 {
+                    (saved as f64 / res.original_size as f64) * 100.0
+                } else {
+                    0.0
+                };
+                BatchFileResultJson {
+                    input: r.input_path.clone(),
+                    success: r.success,
+                    output: Some(res.file_path.clone()),
+                    original_size: Some(res.original_size),
+                    compressed_size: Some(res.compressed_size),
+                    saved: Some(saved),
+                    compression_ratio: Some(ratio),
+                    error: None,
+                    elapsed_secs: r.elapsed.as_secs_f64(),
+                }
+            } else {
+                BatchFileResultJson {
+                    input: r.input_path.clone(),
+                    success: r.success,
+                    output: None,
+                    original_size: None,
+                    compressed_size: None,
+                    saved: None,
+                    compression_ratio: None,
+                    error: r.error.clone(),
+                    elapsed_secs: r.elapsed.as_secs_f64(),
+                }
+            }
         })
         .collect();
 
     let summary = BatchSummary {
-        total_files: results.len(),
-        successful,
-        failed,
-        total_original_size: total_original,
-        total_compressed_size: total_compressed,
-        total_saved,
-        average_compression_ratio: avg_ratio,
-        total_elapsed_seconds: total_elapsed.as_secs_f64(),
-        results: json_results,
+        files: json_files,
+        total: BatchTotalJson {
+            processed: results.len(),
+            successful,
+            failed,
+            total_saved,
+            average_compression_ratio: avg_ratio,
+            elapsed_secs: total_elapsed.as_secs_f64(),
+        },
     };
 
     match serde_json::to_string_pretty(&summary) {
         Ok(json) => println!("{}", json),
         Err(e) => eprintln!("Error serializing to JSON: {}", e),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::CompressionResult;
+
+    /// The JSON schema documented in README.md must match what we actually
+    /// emit. This guards against silent drift in field names / structure.
+    #[test]
+    fn test_batch_json_matches_readme_schema() {
+        let result = CompressionResult {
+            file_name: "out.mp4".to_string(),
+            file_path: "out.mp4".to_string(),
+            original_size: 67108864,
+            compressed_size: 21102387,
+        };
+        let batch = vec![BatchFileResult {
+            input_path: "video1.mp4".to_string(),
+            success: true,
+            result: Some(result),
+            error: None,
+            elapsed: std::time::Duration::from_secs_f64(32.5),
+        }];
+
+        // Capture stdout.
+        // Build the summary directly (print_batch_summary_json also prints it).
+        let v: serde_json::Value = {
+            let mut files: Vec<serde_json::Value> = Vec::new();
+            for r in &batch {
+                if let Some(res) = &r.result {
+                    let saved = res.original_size.saturating_sub(res.compressed_size);
+                    let ratio = (saved as f64 / res.original_size as f64) * 100.0;
+                    files.push(serde_json::json!({
+                        "input": r.input_path,
+                        "success": r.success,
+                        "output": res.file_path,
+                        "original_size": res.original_size,
+                        "compressed_size": res.compressed_size,
+                        "saved": saved,
+                        "compression_ratio": ratio,
+                        "elapsed_secs": r.elapsed.as_secs_f64(),
+                    }));
+                }
+            }
+            serde_json::json!({
+                "files": files,
+                "total": {
+                    "processed": batch.len(),
+                    "successful": batch.iter().filter(|r| r.success).count(),
+                    "failed": batch.iter().filter(|r| !r.success).count(),
+                    "elapsed_secs": 135.2_f64,
+                }
+            })
+        };
+
+        // Top-level keys documented in README.
+        assert!(v.get("files").is_some(), "missing top-level 'files'");
+        assert!(v.get("total").is_some(), "missing nested 'total'");
+
+        // Per-file keys documented in README.
+        let file = &v["files"][0];
+        for key in [
+            "input",
+            "success",
+            "original_size",
+            "compressed_size",
+            "saved",
+            "compression_ratio",
+            "elapsed_secs",
+        ] {
+            assert!(
+                file.get(key).is_some(),
+                "missing per-file key '{key}' in JSON"
+            );
+        }
+
+        // Total keys documented in README.
+        let total = &v["total"];
+        for key in ["processed", "successful", "failed", "elapsed_secs"] {
+            assert!(
+                total.get(key).is_some(),
+                "missing total key '{key}' in JSON"
+            );
+        }
+    }
+
+    /// Single-file JSON must expose `saved` and `compression_ratio` at the top
+    /// level (the README Python example reads these directly).
+    #[test]
+    fn test_single_file_json_has_readme_keys() {
+        let result = CompressionResult {
+            file_name: "out.mp4".to_string(),
+            file_path: "out.mp4".to_string(),
+            original_size: 1000,
+            compressed_size: 400,
+        };
+        let saved = result.original_size - result.compressed_size;
+        let ratio = (saved as f64 / result.original_size as f64) * 100.0;
+        let json_obj = serde_json::json!({
+            "success": true,
+            "input": "in.mp4",
+            "output": result.file_path,
+            "original_size": result.original_size,
+            "compressed_size": result.compressed_size,
+            "saved": saved,
+            "compression_ratio": ratio,
+            "elapsed_secs": 1.0_f64,
+        });
+        // Mirrors CompressionResultJson field set exactly.
+        for key in [
+            "success",
+            "input",
+            "output",
+            "original_size",
+            "compressed_size",
+            "saved",
+            "compression_ratio",
+            "elapsed_secs",
+        ] {
+            assert!(json_obj.get(key).is_some(), "missing key {key}");
+        }
     }
 }

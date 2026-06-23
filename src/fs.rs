@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::domain::FileMetadata;
 use crate::error::{CompressoError, Result};
@@ -81,27 +81,6 @@ pub fn format_size(bytes: u64) -> String {
     }
 }
 
-/// Format duration in seconds to human-readable time
-#[allow(dead_code)]
-pub fn format_duration(seconds: f64) -> String {
-    if seconds < 0.0 {
-        return "0s".to_string();
-    }
-
-    let total_seconds = seconds.round() as u64;
-    let hours = total_seconds / 3600;
-    let minutes = (total_seconds % 3600) / 60;
-    let secs = total_seconds % 60;
-
-    if hours > 0 {
-        format!("{}h {}m {}s", hours, minutes, secs)
-    } else if minutes > 0 {
-        format!("{}m {}s", minutes, secs)
-    } else {
-        format!("{}s", secs)
-    }
-}
-
 /// Generate output path from input path with security validation
 ///
 /// # Security
@@ -114,14 +93,28 @@ pub fn format_duration(seconds: f64) -> String {
 /// The output path is always generated in the same directory as the
 /// canonicalized input file, preventing writes to unexpected locations.
 ///
-pub fn generate_output_path(input: &str, format: Option<&str>) -> String {
+pub fn generate_output_path(input: &str, format: Option<&str>) -> Result<String> {
+    // Reject obviously malicious input early.
+    if input.contains('\0') {
+        return Err(CompressoError::InvalidInput(
+            "input path contains null bytes".to_string(),
+        ));
+    }
+    if input.contains("..") {
+        return Err(CompressoError::InvalidInput(format!(
+            "input path contains '..' (path traversal): {}",
+            input
+        )));
+    }
+
     let input_path = Path::new(input);
 
     // Get the file stem, sanitizing any path traversal attempts
     let stem = input_path
         .file_stem()
         .and_then(|s| s.to_str())
-        .map(|s| sanitize_filename(s))
+        .map(sanitize_filename)
+        .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "output".to_string());
 
     let extension = format.unwrap_or_else(|| {
@@ -131,65 +124,56 @@ pub fn generate_output_path(input: &str, format: Option<&str>) -> String {
             .unwrap_or("mp4")
     });
 
-    // Try to canonicalize the input path to resolve symlinks and get absolute path
+    // Canonicalize the input to resolve symlinks and produce an absolute path.
+    // At this call site the input file should already exist, so canonicalize
+    // is expected to succeed. If it does not, we deliberately *fail* rather
+    // than fall back to a relative parent (the old behavior silently dropped
+    // `..` by collapsing to `parent().file_name()`, masking traversal).
     let parent = match fs::canonicalize(input_path) {
-        Ok(canonical) => {
-            // Use the parent of the canonical (real) path
-            canonical
-                .parent()
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_else(|| ".".to_string())
-        }
+        Ok(canonical) => canonical
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from(".")),
         Err(_) => {
-            // If canonicalization fails (file doesn't exist yet), use parent from input
-            // but only the final component to prevent traversal
-            if let Some(parent) = input_path.parent() {
-                // Get only the file name part of parent to prevent traversal
-                parent
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| ".".to_string())
-            } else {
-                ".".to_string()
-            }
+            // Input doesn't exist here — refuse rather than guess a location.
+            return Err(CompressoError::FileNotFound(input.to_string()));
         }
     };
 
     let output_name = format!("{}_compressed.{}", stem, extension);
 
-    if parent.is_empty() || parent == "." {
-        output_name
+    let result = if parent.as_os_str().is_empty() || parent == Path::new(".") {
+        PathBuf::from(output_name)
     } else {
-        // Use Path::join for platform-correct path separators
-        Path::new(&parent)
-            .join(&output_name)
-            .to_string_lossy()
-            .to_string()
-    }
+        parent.join(output_name)
+    };
+
+    Ok(result.to_string_lossy().into_owned())
 }
 
-/// Sanitize filename to prevent path traversal
+/// Sanitize filename to prevent path traversal while preserving Unicode.
 ///
-/// Removes dangerous characters and sequences:
-/// - Path separators (/, \)
-/// - Parent directory references (..)
-/// - Null bytes
-/// - Control characters
+/// This strips characters that are *structurally* dangerous to a filename
+/// (path separators, null bytes, control characters) and any `..` traversal
+/// sequences, but deliberately preserves legitimate non-ASCII characters
+/// (Cyrillic, CJK, emoji, etc.). The previous implementation used an
+/// alphanumeric allow-list which silently destroyed Cyrillic filenames such as
+/// `видео.mp4` -> `_compressed.mp4`.
 ///
+/// Note: this is applied to a *stem* (no directory components), as produced by
+/// `Path::file_stem()`, but is defensive in case a separator slips through.
 fn sanitize_filename(name: &str) -> String {
     name.chars()
         .filter(|c| {
-            // Allow alphanumeric, spaces, dots, hyphens, underscores
-            c.is_alphanumeric()
-                || *c == ' '
-                || *c == '.'
-                || *c == '-'
-                || *c == '_'
+            // Reject path separators (both Unix and Windows), null, and other
+            // C0 control characters. Everything else (including non-ASCII
+            // letters, spaces, punctuation) is preserved.
+            *c != '/' && *c != '\\' && *c != '\0' && !c.is_control()
         })
         .collect::<String>()
-        .replace("..", "")  // Remove any remaining .. sequences
-        .trim_matches('.')  // Remove leading/trailing dots
+        .replace("..", "") // remove any traversal sequences
+        .trim_matches('.') // strip leading/trailing dots (hidden-file / traversal abuse)
+        .trim() // strip stray whitespace
         .to_string()
 }
 
@@ -269,28 +253,58 @@ mod tests {
     }
 
     #[test]
-    fn test_format_duration() {
-        assert_eq!(format_duration(0.0), "0s");
-        assert_eq!(format_duration(30.0), "30s");
-        assert_eq!(format_duration(45.7), "46s");
-        assert_eq!(format_duration(90.0), "1m 30s");
-        assert_eq!(format_duration(125.0), "2m 5s");
-        assert_eq!(format_duration(3600.0), "1h 0m 0s");
-        assert_eq!(format_duration(3661.0), "1h 1m 1s");
-        assert_eq!(format_duration(5025.0), "1h 23m 45s");
-        assert_eq!(format_duration(330.0), "5m 30s");
-        assert_eq!(format_duration(-10.0), "0s");
+    fn test_sanitize_filename_preserves_unicode() {
+        // Cyrillic must survive (was destroyed by the old alphanumeric filter).
+        assert_eq!(sanitize_filename("видео"), "видео");
+        // CJK too.
+        assert_eq!(sanitize_filename("视频"), "视频");
+        // Spaces, dots, dashes, underscores preserved.
+        assert_eq!(sanitize_filename("my video - 1.mp4"), "my video - 1.mp4");
     }
 
     #[test]
-    fn test_generate_output_path() {
-        assert_eq!(
-            generate_output_path("video.mp4", None),
-            "video_compressed.mp4"
-        );
-        assert_eq!(
-            generate_output_path("video.mp4", Some("webm")),
-            "video_compressed.webm"
+    fn test_sanitize_filename_strips_dangerous() {
+        // Path separators removed.
+        assert_eq!(sanitize_filename("a/b\\c"), "abc");
+        // Null bytes removed.
+        assert_eq!(sanitize_filename("a\0b"), "ab");
+        // Control characters removed.
+        assert_eq!(sanitize_filename("a\x07b"), "ab");
+        // Traversal sequences removed.
+        assert_eq!(sanitize_filename(".."), "");
+        assert_eq!(sanitize_filename("..secret"), "secret");
+        // Leading/trailing dots trimmed.
+        assert_eq!(sanitize_filename(".hidden."), "hidden");
+    }
+
+    #[test]
+    fn test_generate_output_path_rejects_traversal() {
+        // '..' must be rejected, not silently collapsed.
+        let res = generate_output_path("../secret/video.mp4", None);
+        assert!(res.is_err(), "expected path-traversal to be rejected");
+
+        // Null bytes rejected.
+        let res = generate_output_path("vi\0deo.mp4", None);
+        assert!(res.is_err(), "expected null bytes to be rejected");
+    }
+
+    #[test]
+    fn test_generate_output_path_rejects_missing_input() {
+        // Non-existent input must now error (no silent relative fallback).
+        let res = generate_output_path("definitely_nonexistent_video.mp4", None);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_generate_output_path_for_existing_file() {
+        // Use this very source file as a guaranteed-existing input.
+        let src = env!("CARGO_MANIFEST_DIR").to_string() + "/src/fs.rs";
+        let res = generate_output_path(&src, Some("webm"));
+        assert!(res.is_ok(), "{:?}", res);
+        let out = res.unwrap();
+        assert!(
+            out.ends_with("_compressed.webm"),
+            "expected _compressed.webm suffix, got {out}"
         );
     }
 }

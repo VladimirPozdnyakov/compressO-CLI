@@ -1,5 +1,5 @@
-use std::fmt;
 use std::error::Error;
+use std::fmt;
 
 #[derive(Debug)]
 pub enum CompressoError {
@@ -20,7 +20,9 @@ impl fmt::Display for CompressoError {
         match self {
             CompressoError::FileNotFound(path) => write!(f, "{}: {}", t("file_not_found"), path),
             CompressoError::InvalidInput(msg) => write!(f, "{}: {}", t("invalid_input_file"), msg),
-            CompressoError::InvalidOutput(path) => write!(f, "{}: {}", t("invalid_output_path"), path),
+            CompressoError::InvalidOutput(path) => {
+                write!(f, "{}: {}", t("invalid_output_path"), path)
+            }
             CompressoError::FfmpegNotFound => write!(f, "{}", t("ffmpeg_not_found")),
             CompressoError::FfmpegError(msg) => write!(f, "{}: {}", t("ffmpeg_error"), msg),
             CompressoError::Cancelled => write!(f, "{}", t("compression_cancelled_by_user")),

@@ -521,6 +521,7 @@ compresso *.mp4 -q 70 --json > results.json
     {
       "input": "video1.mp4",
       "success": true,
+      "output": "video1_compressed.mp4",
       "original_size": 67108864,
       "compressed_size": 21102387,
       "saved": 45906477,
@@ -532,6 +533,8 @@ compresso *.mp4 -q 70 --json > results.json
     "processed": 3,
     "successful": 3,
     "failed": 0,
+    "total_saved": 136148477,
+    "average_compression_ratio": 65.8,
     "elapsed_secs": 135.2
   }
 }

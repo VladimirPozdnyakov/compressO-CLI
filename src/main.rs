@@ -18,14 +18,29 @@ use std::sync::{
 };
 
 use cli::Cli;
+use cli::LanguageArg;
 use domain::{CompressionConfig, CompressionResult};
 use error::CompressoError;
 use ffmpeg::FFmpeg;
 use localization::{set_language, t};
-use cli::LanguageArg;
 use output::*;
 
 fn main() {
+    // Install a single Ctrl+C handler up front, shared by every code path.
+    // `ctrlc` only allows one handler at a time; installing it repeatedly
+    // (as the batch functions used to do) silently replaces it and is also
+    // fragile under `panic = "abort"`. We hold the shared flag here and pass
+    // clones into the batch/single-file run paths.
+    let cancelled = Arc::new(AtomicBool::new(false));
+    {
+        let cancelled_clone = cancelled.clone();
+        // Failure here is non-fatal: without the handler, Ctrl+C simply uses
+        // the default disposition (terminate). Better than aborting.
+        let _ = ctrlc::set_handler(move || {
+            cancelled_clone.store(true, Ordering::Relaxed);
+        });
+    }
+
     // Check if running without arguments - launch interactive mode
     let args: Vec<String> = env::args().collect();
 
@@ -36,13 +51,16 @@ fn main() {
     // 4. Multiple args with flags -> CLI mode
 
     // Check if all args (except program name) are file paths (not flags)
-    let all_files = args.len() > 1 && args[1..].iter().all(|arg| !arg.starts_with('-') && !arg.starts_with('/'));
+    let all_files = args.len() > 1
+        && args[1..]
+            .iter()
+            .all(|arg| !arg.starts_with('-') && !arg.starts_with('/'));
 
     // Determine if we should run in interactive mode
     // Interactive if: no args, single non-flag arg, or multiple file args (not flags)
     // Also interactive if only language flag is provided without input files
-    let has_language_flag = args.windows(2).any(|w| w[0] == "--language") ||
-                           args.iter().any(|arg| arg.starts_with("--language="));
+    let has_language_flag = args.windows(2).any(|w| w[0] == "--language")
+        || args.iter().any(|arg| arg.starts_with("--language="));
 
     // Check if there are any non-flag arguments that are not language values (potential input files)
     let has_non_flag_args = {
@@ -86,8 +104,8 @@ fn main() {
     // For interactive mode (no args), we need to handle parsing specially
     let config = if is_interactive {
         // Extract language from args if present
-        let has_language_flag = args.windows(2).any(|w| w[0] == "--language") ||
-                               args.iter().any(|arg| arg.starts_with("--language="));
+        let has_language_flag = args.windows(2).any(|w| w[0] == "--language")
+            || args.iter().any(|arg| arg.starts_with("--language="));
 
         // Only set language from args if --language flag is provided
         if has_language_flag {
@@ -120,8 +138,14 @@ fn main() {
         // Interactive mode
         if args.len() > 2 && all_files {
             // Multiple files drag & dropped -> batch interactive mode
-            let files: Vec<String> = args[1..].iter().map(|s| s.clone()).collect();
-            run_interactive_batch(files);
+            let files: Vec<String> = args[1..].to_vec();
+            let outcome = run_interactive_batch(files, cancelled.clone());
+            if outcome.failed > 0 && !outcome.cancelled {
+                std::process::exit(1);
+            }
+            if outcome.cancelled {
+                std::process::exit(130);
+            }
             return;
         }
 
@@ -150,6 +174,10 @@ fn main() {
         // Set language based on CLI argument
         set_language(cli.language.into());
 
+        // In JSON mode, suppress housekeeping stderr messages so machine output
+        // stays parseable.
+        ffmpeg::set_quiet(cli.json);
+
         // Handle --info flag in CLI mode
         if cli.info {
             run_info_mode(&cli);
@@ -160,13 +188,22 @@ fn main() {
         let input_files = get_input_files(&cli);
 
         if input_files.is_empty() {
-            print_error_with_hint(&CompressoError::FileNotFound("No input files specified".to_string()));
+            print_error_with_hint(&CompressoError::FileNotFound(
+                "No input files specified".to_string(),
+            ));
             std::process::exit(1);
         }
 
         // If multiple files, run batch processing
         if input_files.len() > 1 {
-            run_batch_mode(&cli, input_files);
+            let outcome = run_batch_mode(&cli, input_files, cancelled.clone());
+            // Non-zero exit code when any file failed, so CI can detect it.
+            if outcome.failed > 0 && !outcome.cancelled {
+                std::process::exit(1);
+            }
+            if outcome.cancelled {
+                std::process::exit(130);
+            }
             return;
         }
 
@@ -174,16 +211,7 @@ fn main() {
         cli.to_config()
     };
 
-    // Setup Ctrl+C handler
-    let cancelled = Arc::new(AtomicBool::new(false));
-    let cancelled_clone = cancelled.clone();
-
-    ctrlc::set_handler(move || {
-        cancelled_clone.store(true, Ordering::Relaxed);
-    })
-    .expect("Error setting Ctrl+C handler");
-
-    // Run the application
+    // Run the application (cancelled handler was installed at the top of main)
     if let Err(e) = run(config, cancelled) {
         match e {
             CompressoError::Cancelled => {
@@ -296,7 +324,10 @@ fn run(config: CompressionConfig, cancelled: Arc<AtomicBool>) -> error::Result<C
     // Determine output path
     let output_path = config.output_path.clone().unwrap_or_else(|| {
         let format = config.format.map(|f| f.extension());
-        fs::generate_output_path(&config.input_path, format)
+        match fs::generate_output_path(&config.input_path, format) {
+            Ok(p) => p,
+            Err(_) => config.input_path.clone() + "_compressed.mp4",
+        }
     });
 
     // Print video info and config (skip in JSON mode)
@@ -308,10 +339,7 @@ fn run(config: CompressionConfig, cancelled: Arc<AtomicBool>) -> error::Result<C
     // Check for overwrite
     if !config.overwrite && fs::file_exists(&output_path) {
         if !config.json {
-            print_warning(&format!(
-                "Output file already exists: {}",
-                output_path
-            ));
+            print_warning(&format!("Output file already exists: {}", output_path));
             print_info("Use -y flag to overwrite.");
         }
         return Err(CompressoError::InvalidOutput(format!(
@@ -332,11 +360,23 @@ fn run(config: CompressionConfig, cancelled: Arc<AtomicBool>) -> error::Result<C
     // Start compression
     let start_time = std::time::Instant::now();
 
-    let result = ffmpeg.compress_video(&config, Some(&video_info), cancelled.clone(), move |progress, current_frame, total_frames, fps, eta| {
-        if !json_mode {
-            update_progress(&progress_bar_clone, progress, current_frame, total_frames, fps, eta);
-        }
-    })?;
+    let result = ffmpeg.compress_video(
+        &config,
+        Some(&video_info),
+        cancelled.clone(),
+        move |progress, current_frame, total_frames, fps, eta| {
+            if !json_mode {
+                update_progress(
+                    &progress_bar_clone,
+                    progress,
+                    current_frame,
+                    total_frames,
+                    fps,
+                    eta,
+                );
+            }
+        },
+    )?;
 
     let elapsed = start_time.elapsed();
 
@@ -349,7 +389,7 @@ fn run(config: CompressionConfig, cancelled: Arc<AtomicBool>) -> error::Result<C
     if !config.json {
         print_result(&result, elapsed);
     } else {
-        print_result_json(&result, elapsed);
+        print_single_file_json(&config.input_path, &result, elapsed);
     }
 
     Ok(result)
@@ -362,7 +402,7 @@ fn get_input_files(cli: &Cli) -> Vec<String> {
         match fs::get_video_files_in_directory(dir) {
             Ok(files) => {
                 if files.is_empty() {
-                    eprintln!("No video files found in directory: {}", dir);
+                    eprintln!("{}", t("batch_no_videos_in_dir").replace("{path}", dir));
                 }
                 files
             }
@@ -377,35 +417,40 @@ fn get_input_files(cli: &Cli) -> Vec<String> {
     }
 }
 
+/// Outcome of a batch run: how many files failed and whether it was cancelled.
+/// Used by `main` to choose the process exit code (1 on failures, 130 on
+/// cancellation, 0 on full success).
+struct BatchOutcome {
+    failed: usize,
+    cancelled: bool,
+}
+
 /// Run batch processing mode for multiple files
-fn run_batch_mode(cli: &Cli, input_files: Vec<String>) {
+fn run_batch_mode(cli: &Cli, input_files: Vec<String>, cancelled: Arc<AtomicBool>) -> BatchOutcome {
     if !cli.json {
         print_header();
-        println!("{}", format!("Processing {} files...", input_files.len()).bright_cyan().bold());
+        println!(
+            "{}",
+            t("batch_processing_n_files")
+                .replace("{n}", &input_files.len().to_string())
+                .bright_cyan()
+                .bold()
+        );
         println!();
     }
 
     let batch_start = std::time::Instant::now();
     let mut results = Vec::new();
 
-    // Setup Ctrl+C handler
-    let cancelled = Arc::new(AtomicBool::new(false));
-    let cancelled_clone = cancelled.clone();
-
-    ctrlc::set_handler(move || {
-        cancelled_clone.store(true, Ordering::Relaxed);
-    })
-    .expect("Error setting Ctrl+C handler");
+    // Ctrl+C handler is installed once at the top of main(); we reuse that flag.
 
     for (i, input_path) in input_files.iter().enumerate() {
         if !cli.json {
-            println!(
-                "{} Processing file {}/{}: {}",
-                "→".bright_blue(),
-                i + 1,
-                input_files.len(),
-                input_path.bright_white()
-            );
+            let msg = t("batch_processing_file")
+                .replace("{i}", &(i + 1).to_string())
+                .replace("{n}", &input_files.len().to_string())
+                .replace("{path}", input_path);
+            println!("{} {}", "→".bright_blue(), msg.bright_white());
         }
 
         let file_start = std::time::Instant::now();
@@ -465,11 +510,27 @@ fn run_batch_mode(cli: &Cli, input_files: Vec<String>) {
     } else {
         print_batch_summary(&results, batch_elapsed);
     }
+
+    let failed = results.iter().filter(|r| !r.success).count();
+    let cancelled = cancelled.load(Ordering::Relaxed);
+    BatchOutcome { failed, cancelled }
 }
 
 /// Run interactive batch mode when multiple files are drag & dropped
-fn run_interactive_batch(files: Vec<String>) {
+fn run_interactive_batch(files: Vec<String>, cancelled: Arc<AtomicBool>) -> BatchOutcome {
     use dialoguer::{theme::ColorfulTheme, Input, Select};
+    use std::io::IsTerminal;
+
+    // The interactive batch wizard uses prompts that need a TTY. When stdin is
+    // not a terminal, fall back to non-interactive batch processing so the
+    // dropped files are still handled instead of silently answering defaults.
+    if !std::io::stdin().is_terminal() {
+        // Reuse the non-interactive batch path. The files are already raw
+        // paths (drag & drop), so validate them like get_input_files does.
+        let cli =
+            Cli::parse_from(std::iter::once("compresso").chain(files.iter().map(|s| s.as_str())));
+        return run_batch_mode(&cli, files, cancelled);
+    }
 
     print_header();
 
@@ -483,7 +544,11 @@ fn run_interactive_batch(files: Vec<String>) {
 
     for file_path in files {
         // Clean up path (remove quotes)
-        let cleaned = file_path.trim().trim_matches('"').trim_matches('\'').to_string();
+        let cleaned = file_path
+            .trim()
+            .trim_matches('"')
+            .trim_matches('\'')
+            .to_string();
 
         if !fs::file_exists(&cleaned) {
             invalid_files.push((cleaned, t("file_not_found")));
@@ -499,16 +564,33 @@ fn run_interactive_batch(files: Vec<String>) {
     }
 
     // Show files to be processed
-    println!("{} {}:", valid_files.len().to_string().bright_green(), t("video_files_found"));
+    println!(
+        "{} {}:",
+        valid_files.len().to_string().bright_green(),
+        t("video_files_found")
+    );
     for (i, file) in valid_files.iter().enumerate() {
-        println!("  {} {}", format!("[{}]", i + 1).dimmed(), file.bright_white());
+        println!(
+            "  {} {}",
+            format!("[{}]", i + 1).dimmed(),
+            file.bright_white()
+        );
     }
 
     if !invalid_files.is_empty() {
         println!();
-        println!("{} {}:", invalid_files.len().to_string().bright_yellow(), t("files_will_be_skipped"));
+        println!(
+            "{} {}:",
+            invalid_files.len().to_string().bright_yellow(),
+            t("files_will_be_skipped")
+        );
         for (file, reason) in &invalid_files {
-            println!("  {} {} - {}", "⚠".bright_yellow(), file.dimmed(), reason.bright_yellow());
+            println!(
+                "  {} {} - {}",
+                "⚠".bright_yellow(),
+                file.dimmed(),
+                reason.bright_yellow()
+            );
         }
     }
 
@@ -516,7 +598,10 @@ fn run_interactive_batch(files: Vec<String>) {
         println!();
         println!("{}", t("no_valid_video_files").bright_red());
         interactive::wait_for_exit();
-        return;
+        return BatchOutcome {
+            failed: 0,
+            cancelled: false,
+        };
     }
 
     println!();
@@ -561,7 +646,8 @@ fn run_interactive_batch(files: Vec<String>) {
         .items(&advanced_options)
         .default(0)
         .interact()
-        .unwrap_or(0) == 1;
+        .unwrap_or(0)
+        == 1;
 
     let mut width: Option<u32> = None;
     let mut height: Option<u32> = None;
@@ -628,30 +714,32 @@ fn run_interactive_batch(files: Vec<String>) {
         .items(&proceed_options)
         .default(1)
         .interact()
-        .unwrap_or(1) == 1;
+        .unwrap_or(1)
+        == 1;
 
     if !proceed {
         println!("{}", t("compression_cancelled").bright_yellow());
         interactive::wait_for_exit();
-        return;
+        return BatchOutcome {
+            failed: 0,
+            cancelled: true,
+        };
     }
 
     println!();
-    println!("{}", format!("{} {}...", t("processing"), valid_files.len()).bright_cyan().bold());
+    println!(
+        "{}",
+        format!("{} {}...", t("processing"), valid_files.len())
+            .bright_cyan()
+            .bold()
+    );
     println!();
 
     // Process files
     let batch_start = std::time::Instant::now();
     let mut results = Vec::new();
 
-    // Setup Ctrl+C handler
-    let cancelled = Arc::new(AtomicBool::new(false));
-    let cancelled_clone = cancelled.clone();
-
-    ctrlc::set_handler(move || {
-        cancelled_clone.store(true, Ordering::Relaxed);
-    })
-    .expect("Error setting Ctrl+C handler");
+    // Ctrl+C handler is installed once at the top of main(); we reuse that flag.
 
     for (i, input_path) in valid_files.iter().enumerate() {
         println!(
@@ -725,4 +813,11 @@ fn run_interactive_batch(files: Vec<String>) {
 
     // Wait for exit
     interactive::wait_for_exit();
+
+    let failed = results.iter().filter(|r| !r.success).count();
+    let cancelled_flag = cancelled.load(Ordering::Relaxed);
+    BatchOutcome {
+        failed,
+        cancelled: cancelled_flag,
+    }
 }

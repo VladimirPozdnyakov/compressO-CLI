@@ -1,14 +1,23 @@
 use colored::*;
 use dialoguer::{theme::ColorfulTheme, Input, Select};
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 
-use crate::domain::{CompressionConfig, CropCoordinates, FlipOptions, OutputFormat, Preset, VideoTransforms};
+use crate::domain::{
+    CompressionConfig, CropCoordinates, FlipOptions, OutputFormat, Preset, VideoTransforms,
+};
 use crate::error::Result;
 use crate::fs;
 use crate::localization::t;
 
-/// Wait for user to press Enter before exiting
+/// Wait for user to press Enter before exiting.
+///
+/// Only blocks when stdin is an interactive terminal. When stdin is *not* a
+/// TTY (e.g. piped input, run from a script or systemd service), blocking on
+/// `read_line` would hang forever, so we return immediately instead.
 pub fn wait_for_exit() {
+    if !io::stdin().is_terminal() {
+        return;
+    }
     println!();
     println!("{}", t("press_enter_to_exit").dimmed());
     let _ = io::stdout().flush();
@@ -18,7 +27,22 @@ pub fn wait_for_exit() {
 
 /// Run interactive mode - wizard for video compression
 /// If input_path is provided, skip the file selection step
-pub fn run_interactive(provided_path: Option<String>, should_ask_language: bool) -> Result<Option<CompressionConfig>> {
+pub fn run_interactive(
+    provided_path: Option<String>,
+    should_ask_language: bool,
+) -> Result<Option<CompressionConfig>> {
+    // The interactive wizard relies on `dialoguer` prompts, which require a TTY.
+    // Without one (piped stdin, cron, systemd service), every prompt silently
+    // returns its default, which would produce surprising/incorrect behavior.
+    // Fail loudly instead.
+    if !io::stdin().is_terminal() {
+        return Err(crate::error::CompressoError::InvalidInput(
+            "interactive mode requires a terminal (TTY). Run with explicit arguments \
+             instead, e.g.: compresso video.mp4 -q 70"
+                .to_string(),
+        ));
+    }
+
     // Ask for language if this is the initial launch (no arguments provided)
     if should_ask_language {
         ask_language_selection()?;
@@ -69,14 +93,11 @@ pub fn run_interactive(provided_path: Option<String>, should_ask_language: bool)
 
 /// Ask user to select language
 pub fn ask_language_selection() -> Result<()> {
-    use dialoguer::{theme::ColorfulTheme, Select};
     use crate::localization::{set_language, Language};
+    use dialoguer::{theme::ColorfulTheme, Select};
 
     let theme = ColorfulTheme::default();
-    let language_options = vec![
-        "English",
-        "Русский",
-    ];
+    let language_options = vec!["English", "Русский"];
 
     let language_idx = Select::with_theme(&theme)
         .with_prompt("Select language / Выберите язык")
@@ -101,7 +122,14 @@ fn print_interactive_header() {
     println!("{}", t("header_separator").dimmed());
     println!(
         "{}",
-        format!("  {} {} - {}", t("app_name"), t("app_version"), t("interactive_mode")).bright_cyan().bold()
+        format!(
+            "  {} {} - {}",
+            t("app_name"),
+            t("app_version"),
+            t("interactive_mode")
+        )
+        .bright_cyan()
+        .bold()
     );
     println!("{}", t("header_separator").dimmed());
     println!();
@@ -200,7 +228,8 @@ fn prompt_compression_settings(input_path: &str) -> Result<CompressionConfig> {
         .items(&advanced_options)
         .default(0)
         .interact()
-        .unwrap_or(0) == 1;
+        .unwrap_or(0)
+        == 1;
 
     let mut width: Option<u32> = None;
     let mut height: Option<u32> = None;
@@ -318,42 +347,28 @@ fn prompt_compression_settings(input_path: &str) -> Result<CompressionConfig> {
             .unwrap_or_default();
 
         if !crop_input.is_empty() {
-            // Parse crop format: WxH:X:Y
-            let parts: Vec<&str> = crop_input.split(':').collect();
-            if parts.len() == 2 {
-                let size_parts: Vec<&str> = parts[0].split('x').collect();
-                let pos_parts: Vec<&str> = parts[1].split(':').collect();
-
-                if size_parts.len() == 2 {
-                    let crop_width = size_parts[0].parse().ok();
-                    let crop_height = size_parts[1].parse().ok();
-                    let crop_x = parts[1].split(':').next().and_then(|s| s.parse().ok()).unwrap_or(0);
-                    let crop_y = if pos_parts.len() > 1 {
-                        pos_parts[1].parse().ok().unwrap_or(0)
-                    } else {
-                        0
-                    };
-
-                    if let (Some(w), Some(h)) = (crop_width, crop_height) {
-                        crop = Some(CropCoordinates {
-                            width: w,
-                            height: h,
-                            x: crop_x,
-                            y: crop_y,
-                        });
-                    }
+            // Reuse the same parser as the CLI flag so both paths accept the
+            // documented `WxH:X:Y` / `W:H:X:Y` formats. The previous inline
+            // parser checked `parts.len() == 2`, which never matched the
+            // documented `1920x1080:0:0` (it splits into 3 parts), so crop was
+            // silently ignored in interactive mode.
+            match crate::cli::parse_crop(&crop_input) {
+                Ok(c) => crop = Some(c),
+                Err(msg) => {
+                    println!("{} {}", "⚠".bright_yellow(), msg.bright_yellow());
                 }
             }
         }
     }
 
     // Generate output path
-    let output_path = fs::generate_output_path(input_path, format.map(|f| f.extension()));
+    let output_path = fs::generate_output_path(input_path, format.map(|f| f.extension()))?;
 
     // Get file size for estimate
     let file_metadata = fs::get_file_metadata(input_path)?;
     let original_size = file_metadata.size;
-    let (estimated_min, estimated_max) = crate::output::estimate_output_size_range(original_size, quality, preset);
+    let (estimated_min, estimated_max) =
+        crate::output::estimate_output_size_range(original_size, quality, preset);
 
     // Summary and confirmation
     println!();
@@ -370,7 +385,11 @@ fn prompt_compression_settings(input_path: &str) -> Result<CompressionConfig> {
             Preset::Ironclad => t("ironclad_preset").bright_blue(),
         }
     );
-    println!("  {} {}%", t("quality").dimmed(), quality.to_string().bright_yellow());
+    println!(
+        "  {} {}%",
+        t("quality").dimmed(),
+        quality.to_string().bright_yellow()
+    );
 
     // Show size estimate range
     println!();
@@ -386,7 +405,8 @@ fn prompt_compression_settings(input_path: &str) -> Result<CompressionConfig> {
         fs::format_size(estimated_max).bright_cyan()
     );
     let avg_estimated = (estimated_min + estimated_max) / 2;
-    let savings_pct = ((original_size.saturating_sub(avg_estimated)) as f64 / original_size as f64) * 100.0;
+    let savings_pct =
+        ((original_size.saturating_sub(avg_estimated)) as f64 / original_size as f64) * 100.0;
     println!(
         "  {} ~{:.0}%",
         t("est_savings").dimmed(),
@@ -394,7 +414,11 @@ fn prompt_compression_settings(input_path: &str) -> Result<CompressionConfig> {
     );
 
     if let Some(f) = format {
-        println!("  {} {}", t("format").dimmed(), f.extension().bright_white());
+        println!(
+            "  {} {}",
+            t("format").dimmed(),
+            f.extension().bright_white()
+        );
     }
 
     if let (Some(w), Some(h)) = (width, height) {
@@ -413,7 +437,11 @@ fn prompt_compression_settings(input_path: &str) -> Result<CompressionConfig> {
     if rotate.is_some() || flip_horizontal || flip_vertical || crop.is_some() {
         println!();
         if let Some(r) = rotate {
-            println!("  {} {}°", t("rotate").dimmed(), r.to_string().bright_cyan());
+            println!(
+                "  {} {}°",
+                t("rotate").dimmed(),
+                r.to_string().bright_cyan()
+            );
         }
 
         if flip_horizontal || flip_vertical {
@@ -447,7 +475,8 @@ fn prompt_compression_settings(input_path: &str) -> Result<CompressionConfig> {
         .items(&proceed_options)
         .default(1)
         .interact()
-        .unwrap_or(1) == 1;
+        .unwrap_or(1)
+        == 1;
 
     if !proceed {
         println!("{}", t("compression_cancelled").bright_yellow());
@@ -466,11 +495,7 @@ fn prompt_compression_settings(input_path: &str) -> Result<CompressionConfig> {
         None
     };
 
-    let transforms = VideoTransforms {
-        crop,
-        rotate,
-        flip,
-    };
+    let transforms = VideoTransforms { crop, rotate, flip };
 
     Ok(CompressionConfig {
         input_path: input_path.to_string(),

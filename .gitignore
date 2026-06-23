@@ -1,6 +1,6 @@
 # Rust
 /target/
-Cargo.lock
+# Note: Cargo.lock IS committed for this binary crate (recommended practice).
 
 # IDE
 .idea/
@@ -27,10 +27,6 @@ Thumbs.db
 # Environment
 .env
 .env.local
-
-# Build scripts
-build.bat
-build.ps1
 
 # Auto Claude data directory
 .auto-claude/

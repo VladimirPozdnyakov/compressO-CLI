@@ -69,7 +69,10 @@ impl std::str::FromStr for Preset {
         match s.to_lowercase().as_str() {
             "thunderbolt" | "fast" => Ok(Preset::Thunderbolt),
             "ironclad" | "quality" => Ok(Preset::Ironclad),
-            _ => Err(format!("Unknown preset: {}. Use 'thunderbolt' or 'ironclad'", s)),
+            _ => Err(format!(
+                "Unknown preset: {}. Use 'thunderbolt' or 'ironclad'",
+                s
+            )),
         }
     }
 }
@@ -120,12 +123,8 @@ impl std::str::FromStr for OutputFormat {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Self::from_extension(s).ok_or_else(|| {
-            format!(
-                "Unknown format: {}. Supported: mp4, mov, webm, avi, mkv",
-                s
-            )
-        })
+        Self::from_extension(s)
+            .ok_or_else(|| format!("Unknown format: {}. Supported: mp4, mov, webm, avi, mkv", s))
     }
 }
 

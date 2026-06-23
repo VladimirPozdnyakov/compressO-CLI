@@ -1,6 +1,8 @@
 use clap::{Parser, ValueEnum};
 
-use crate::domain::{CompressionConfig, CropCoordinates, FlipOptions, OutputFormat, Preset, VideoTransforms};
+use crate::domain::{
+    CompressionConfig, CropCoordinates, FlipOptions, OutputFormat, Preset, VideoTransforms,
+};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -33,7 +35,7 @@ pub struct Cli {
     pub quality: u8,
 
     /// Compression preset
-    #[arg(short, long, value_enum, default_value = "thunderbolt")]
+    #[arg(short, long, value_enum, default_value = "ironclad")]
     pub preset: PresetArg,
 
     /// Output format (mp4, mov, webm, avi, mkv)
@@ -156,7 +158,12 @@ fn parse_rotation(s: &str) -> Result<i32, String> {
     }
 }
 
-fn parse_crop(s: &str) -> Result<CropCoordinates, String> {
+/// Parse a crop specification string.
+///
+/// Accepts `WxH:X:Y` (e.g. `1920x1080:0:0`) or `W:H:X:Y`.
+/// Used by both the CLI flag parser and the interactive wizard so that both
+/// code paths accept the exact same documented format.
+pub fn parse_crop(s: &str) -> Result<CropCoordinates, String> {
     // Format: WxH:X:Y or W:H:X:Y
     let parts: Vec<&str> = s.split(':').collect();
 
@@ -217,5 +224,52 @@ impl Cli {
             verbose: self.verbose,
             json: self.json,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ---- parse_crop -----------------------------------------------------------
+    //
+    // Both the `WxH:X:Y` (documented) and `W:H:X:Y` forms must be accepted by
+    // the shared parser used by the CLI flag and the interactive wizard.
+
+    #[test]
+    fn test_parse_crop_wxh_form() {
+        let c = parse_crop("1920x1080:0:0").unwrap();
+        assert_eq!((c.width, c.height, c.x, c.y), (1920, 1080, 0, 0));
+    }
+
+    #[test]
+    fn test_parse_crop_colon_form() {
+        let c = parse_crop("1920:1080:10:20").unwrap();
+        assert_eq!((c.width, c.height, c.x, c.y), (1920, 1080, 10, 20));
+    }
+
+    #[test]
+    fn test_parse_crop_invalid() {
+        // Missing components.
+        assert!(parse_crop("1920x1080").is_err());
+        // Non-numeric.
+        assert!(parse_crop("abc:1080:0:0").is_err());
+        // Empty.
+        assert!(parse_crop("").is_err());
+    }
+
+    // ---- parse_rotation -------------------------------------------------------
+
+    #[test]
+    fn test_parse_rotation_valid() {
+        for ok in ["90", "180", "270", "-90", "-180", "-270"] {
+            assert!(parse_rotation(ok).is_ok(), "{ok} should be valid");
+        }
+    }
+
+    #[test]
+    fn test_parse_rotation_invalid() {
+        assert!(parse_rotation("45").is_err());
+        assert!(parse_rotation("abc").is_err());
     }
 }

@@ -71,7 +71,7 @@ fn english_translations() -> HashMap<String, String> {
     let mut translations = HashMap::new();
     // General terms
     translations.insert("app_name".to_string(), "CompressO CLI".to_string());
-    translations.insert("app_version".to_string(), "v1.1.1".to_string());
+    translations.insert("app_version".to_string(), "v1.1.2".to_string());
     translations.insert("header_separator".to_string(), "━".repeat(50).to_string());
     translations.insert(
         "compression_complete".to_string(),
@@ -382,7 +382,7 @@ fn russian_translations() -> HashMap<String, String> {
 
     // General terms
     translations.insert("app_name".to_string(), "CompressO CLI".to_string());
-    translations.insert("app_version".to_string(), "v1.1.1".to_string());
+    translations.insert("app_version".to_string(), "v1.1.2".to_string());
     translations.insert("header_separator".to_string(), "━".repeat(50).to_string());
     translations.insert(
         "compression_complete".to_string(),
